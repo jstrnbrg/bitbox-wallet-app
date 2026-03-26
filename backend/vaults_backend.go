@@ -10,7 +10,6 @@ import (
 	accountsTypes "github.com/BitBoxSwiss/bitbox-wallet-app/backend/accounts/types"
 	coinpkg "github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/coin"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/config"
-	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/keystore"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/signing"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/vaults"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/util/errp"
@@ -140,51 +139,66 @@ func (backend *Backend) VaultSetupDraft(id string) (*vaults.Draft, error) {
 	return backend.vaultDraftStore.GetDraft(id)
 }
 
-// EnrollVaultSigner enrolls the currently connected keystore into the given draft.
+// EnrollVaultSigner enrolls all currently connected keystores into the given draft.
+// Keystores that are already enrolled are silently skipped.
 func (backend *Backend) EnrollVaultSigner(id string) (*vaults.Draft, error) {
 	draft, err := backend.vaultDraftStore.GetDraft(id)
 	if err != nil {
 		return nil, err
 	}
-	ks := backend.Keystore()
-	if ks == nil {
-		return nil, errp.New("keystore not found")
-	}
 	coinInstance, err := backend.Coin(draft.Network)
 	if err != nil {
 		return nil, err
 	}
-	if !ks.SupportsAccount(coinInstance, signing.ScriptTypeP2WSH) {
-		if ks.Type() == keystore.TypeHardware {
-			return nil, errp.WithStack(keystore.ErrFirmwareUpgradeRequired)
+
+	defer backend.accountsAndKeystoreLock.RLock()()
+	if !backend.hasKeystores() {
+		return nil, errp.New("no keystore connected")
+	}
+
+	enrolled := 0
+	for _, ks := range backend.keystores {
+		if !ks.SupportsAccount(coinInstance, signing.ScriptTypeP2WSH) {
+			continue
 		}
-		return nil, errp.WithStack(keystore.ErrUnsupportedFeature)
-	}
-	rootFingerprint, err := ks.RootFingerprint()
-	if err != nil {
-		return nil, err
-	}
-	for _, participant := range draft.Participants {
-		if bytes.Equal(participant.KeyInfo.RootFingerprint, rootFingerprint) {
-			return nil, errp.New("signer already enrolled")
+		rootFingerprint, err := ks.RootFingerprint()
+		if err != nil {
+			continue
 		}
+		// Skip if already enrolled.
+		alreadyEnrolled := false
+		for _, participant := range draft.Participants {
+			if bytes.Equal(participant.KeyInfo.RootFingerprint, rootFingerprint) {
+				alreadyEnrolled = true
+				break
+			}
+		}
+		if alreadyEnrolled {
+			continue
+		}
+		xpub, err := ks.ExtendedPublicKey(coinInstance, draft.AccountKeypath)
+		if err != nil {
+			continue
+		}
+		name, err := ks.Name()
+		if err != nil {
+			continue
+		}
+		draft.Participants = append(draft.Participants, signing.BitcoinPolicyParticipant{
+			KeyInfo: signing.KeyInfo{
+				RootFingerprint:   rootFingerprint,
+				AbsoluteKeypath:   draft.AccountKeypath,
+				ExtendedPublicKey: xpub,
+			},
+			Name: name,
+		})
+		enrolled++
 	}
-	xpub, err := ks.ExtendedPublicKey(coinInstance, draft.AccountKeypath)
-	if err != nil {
-		return nil, err
+
+	if enrolled == 0 {
+		return nil, errp.New("no new signers to enroll")
 	}
-	name, err := ks.Name()
-	if err != nil {
-		return nil, err
-	}
-	draft.Participants = append(draft.Participants, signing.BitcoinPolicyParticipant{
-		KeyInfo: signing.KeyInfo{
-			RootFingerprint:   rootFingerprint,
-			AbsoluteKeypath:   draft.AccountKeypath,
-			ExtendedPublicKey: xpub,
-		},
-		Name: name,
-	})
+
 	if len(draft.Participants) >= 3 {
 		draft.Participants = vaults.CanonicalizeParticipants(draft.Participants)
 		draft.PolicyID = vaults.ComputePolicyID(

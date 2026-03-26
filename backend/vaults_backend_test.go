@@ -115,7 +115,7 @@ func TestVaultSetupLifecycle(t *testing.T) {
 	require.Equal(t, vaults.DraftStateCollectingSigners, draft.State)
 
 	_, err = backend.EnrollVaultSigner(draft.ID)
-	require.ErrorContains(t, err, "signer already enrolled")
+	require.ErrorContains(t, err, "no new signers to enroll")
 
 	setTestKeystore(signers[1])
 	draft, err = backend.EnrollVaultSigner(draft.ID)
