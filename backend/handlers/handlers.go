@@ -3,7 +3,6 @@
 package handlers
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -64,6 +63,7 @@ type Backend interface {
 	AccountsByKeystore() (backend.KeystoresAccountsListMap, error)
 	AccountsFiatAndCoinBalance(backend.AccountsList, string) (*big.Rat, map[coinpkg.Code]*big.Int, error)
 	Keystore() keystore.Keystore
+	KeystoreForFingerprint(fingerprint []byte) keystore.Keystore
 	AccountsBalanceSummary() (*backend.AccountsBalanceSummary, error)
 	OnAccountInit(f func(accounts.Interface))
 	OnAccountUninit(f func(accounts.Interface))
@@ -650,29 +650,12 @@ func (handlers *Handlers) getKeystoreFeatures(r *http.Request) interface{} {
 		}
 	}
 
-	connectedKeystore := handlers.backend.Keystore()
+	connectedKeystore := handlers.backend.KeystoreForFingerprint(rootFingerprint)
 	if connectedKeystore == nil {
-		handlers.log.Warn("features requested but no keystore connected")
-		return response{
-			Success:      false,
-			ErrorMessage: "keystore not connected",
-		}
-	}
-
-	connectedRootFingerprint, err := connectedKeystore.RootFingerprint()
-	if err != nil {
-		handlers.log.WithError(err).Error("could not determine connected keystore root fingerprint")
-		return response{
-			Success:      false,
-			ErrorMessage: err.Error(),
-		}
-	}
-
-	if !bytes.Equal(rootFingerprint, connectedRootFingerprint) {
 		handlers.log.WithField("requested", rootFingerprintHex).Warn("features requested for non-connected keystore")
 		return response{
 			Success:      false,
-			ErrorMessage: "wrong keystore connected",
+			ErrorMessage: "keystore not connected",
 		}
 	}
 
@@ -740,11 +723,14 @@ func (handlers *Handlers) getAccounts(*http.Request) interface{} {
 					accountJSON.Keystore.Name = name
 				}
 			}
-			if connectedKeystore := handlers.backend.Keystore(); connectedKeystore != nil {
-				rootFingerprint, err := connectedKeystore.RootFingerprint()
-				if err == nil && persistedAccount.SigningConfigurations.ContainsRootFingerprint(rootFingerprint) {
-					accountJSON.ConnectedSigners = []string{hex.EncodeToString(rootFingerprint)}
-					accountJSON.Keystore.Connected = true
+			// For vault accounts, check each participant to see which signers are connected.
+			for _, cfg := range persistedAccount.SigningConfigurations {
+				for _, ki := range cfg.KeyInfos() {
+					if handlers.backend.KeystoreForFingerprint(ki.RootFingerprint) != nil {
+						fpHex := hex.EncodeToString(ki.RootFingerprint)
+						accountJSON.ConnectedSigners = append(accountJSON.ConnectedSigners, fpHex)
+						accountJSON.Keystore.Connected = true
+					}
 				}
 			}
 			accounts = append(accounts, accountJSON)
@@ -762,15 +748,7 @@ func (handlers *Handlers) getAccounts(*http.Request) interface{} {
 			continue
 		}
 
-		keystoreConnected := false
-		if connectedKeystore := handlers.backend.Keystore(); connectedKeystore != nil {
-			connectedKeystoreRootFingerprint, err := connectedKeystore.RootFingerprint()
-			if err != nil {
-				handlers.log.WithError(err).Error("Could not retrieve rootFingerprint")
-			} else {
-				keystoreConnected = bytes.Equal(rootFingerprint, connectedKeystoreRootFingerprint)
-			}
-		}
+		keystoreConnected := handlers.backend.KeystoreForFingerprint(rootFingerprint) != nil
 
 		accounts = append(accounts, newAccountJSON(*keystore, account, activeTokens, keystoreConnected))
 	}

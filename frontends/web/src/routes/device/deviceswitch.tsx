@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { TDevices } from '@/api/devices';
 import BitBox01 from './bitbox01/bitbox01';
 import { BitBox02 } from './bitbox02/bitbox02';
@@ -14,6 +16,22 @@ type TProps = {
 
 const DeviceSwitch = ({ deviceID, devices, hasAccounts }: TProps) => {
   const deviceIDs = Object.keys(devices);
+  const navigate = useNavigate();
+
+  // If the device we're viewing was unplugged, redirect to the device list or settings.
+  const deviceMissing = deviceID !== null && !deviceIDs.includes(deviceID);
+  useEffect(() => {
+    if (!deviceMissing) {
+      return;
+    }
+    if (deviceIDs.length > 1) {
+      navigate('/settings/device-settings', { replace: true });
+    } else if (deviceIDs.length === 1 && deviceIDs[0]) {
+      navigate(`/settings/device-settings/${deviceIDs[0]}`, { replace: true });
+    } else {
+      navigate('/settings/device-settings', { replace: true });
+    }
+  }, [deviceMissing, deviceIDs, navigate]);
 
   if (deviceID === null || !deviceIDs.includes(deviceID)) {
     return <Waiting />;

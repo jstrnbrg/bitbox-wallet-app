@@ -163,7 +163,19 @@ func (backend *Backend) aoppKeystoreRegistered() {
 	if backend.aopp.State != aoppStateAwaitingKeystore {
 		return
 	}
-	if !backend.keystore.CanSignMessage(backend.aopp.coinCode) {
+	if !backend.hasKeystores() {
+		backend.aoppSetError(errAOPPUnsupportedKeystore)
+		return
+	}
+	// Check that at least one connected keystore can sign messages.
+	canSign := false
+	for _, ks := range backend.keystores {
+		if ks.CanSignMessage(backend.aopp.coinCode) {
+			canSign = true
+			break
+		}
+	}
+	if !canSign {
 		backend.aoppSetError(errAOPPUnsupportedKeystore)
 		return
 	}
@@ -177,7 +189,8 @@ func (backend *Backend) aoppKeystoreRegistered() {
 			return
 		}
 
-		if err := compareRootFingerprint(backend.keystore, accountFingerprint); err != nil {
+		// Only include accounts whose keystore is connected.
+		if backend.keystoreForFingerprint(accountFingerprint) == nil {
 			continue
 		}
 		if acct.Config().Config.Inactive || acct.Config().Config.HiddenBecauseUnused {
@@ -287,7 +300,7 @@ func (backend *Backend) AOPPApprove() {
 		return
 	}
 	backend.aopp.State = aoppStateAwaitingKeystore
-	if backend.keystore == nil {
+	if !backend.hasKeystores() {
 		backend.notifyAOPP()
 		return
 	}
@@ -389,17 +402,31 @@ loop:
 	if backend.aopp.XpubRequired {
 		xpub = account.Config().Config.SigningConfigurations[signingConfigIdx].ExtendedPublicKey().String()
 	}
+	// Look up the keystore for this account.
+	accountFingerprint, err := account.Config().Config.SigningConfigurations.RootFingerprint()
+	if err != nil {
+		log.WithError(err).Error("could not get account root fingerprint for AOPP")
+		backend.aoppSetError(errAOPPUnknown)
+		return
+	}
+	ks := backend.keystoreForFingerprint(accountFingerprint)
+	if ks == nil {
+		log.Error("no connected keystore for AOPP account")
+		backend.aoppSetError(errAOPPUnknown)
+		return
+	}
+
 	var sig []byte
 	switch account.Coin().Code() {
 	case coinpkg.CodeBTC, coinpkg.CodeRBTC:
-		sig, err = backend.keystore.SignBTCMessage(
+		sig, err = ks.SignBTCMessage(
 			[]byte(backend.aopp.Message),
 			addr.AbsoluteKeypath(),
 			account.Config().Config.SigningConfigurations[signingConfigIdx].ScriptType(),
 			account.Coin().Code(),
 		)
 	case coinpkg.CodeETH:
-		sig, err = backend.keystore.SignETHMessage(
+		sig, err = ks.SignETHMessage(
 			[]byte(backend.aopp.Message),
 			addr.AbsoluteKeypath(),
 		)

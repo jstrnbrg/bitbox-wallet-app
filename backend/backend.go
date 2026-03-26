@@ -213,14 +213,17 @@ type Backend struct {
 	vaultDraftStore *vaults.Store
 
 	devices map[string]device.Interface
+	// deviceFingerprints maps device IDs to their keystore root fingerprints. This is needed
+	// because when a device is unplugged, we can no longer query it for its fingerprint.
+	deviceFingerprints map[string][]byte
 
 	usbManager *usb.Manager
 	bluetooth  *bluetooth.Bluetooth
 
 	accountsAndKeystoreLock locker.Locker
 	accounts                AccountsList
-	// keystore is nil if no keystore is connected.
-	keystore keystore.Keystore
+	// keystores holds all currently connected keystores, keyed by hex-encoded root fingerprint.
+	keystores map[string]keystore.Keystore
 
 	connectKeystore connectKeystore
 
@@ -293,8 +296,10 @@ func NewBackend(arguments *arguments.Arguments, environment Environment) (*Backe
 		config:      backendConfig,
 		events:      make(chan interface{}),
 
-		devices:  map[string]device.Interface{},
-		coins:    map[coinpkg.Code]coinpkg.Coin{},
+		devices:            map[string]device.Interface{},
+		deviceFingerprints: map[string][]byte{},
+		keystores:          map[string]keystore.Keystore{},
+		coins:     map[coinpkg.Code]coinpkg.Coin{},
 		accounts: []accounts.Interface{},
 		aopp:     AOPP{State: aoppStateInactive},
 		makeBtcAccount: func(config *accounts.AccountConfig, coin *btc.Coin, gapLimits *types.GapLimits, getAddress func(coinpkg.Code, blockchain.ScriptHashHex) (*addresses.AccountAddress, error), log *logrus.Entry) accounts.Interface {
@@ -720,14 +725,37 @@ func (backend *Backend) HTTPClient() *http.Client {
 	return backend.httpClient
 }
 
-// Keystore returns the keystore registered at this backend, or nil if no keystore is registered.
-func (backend *Backend) Keystore() keystore.Keystore {
-	defer backend.accountsAndKeystoreLock.RLock()()
-	return backend.keystore
+// keystoreForFingerprint returns the keystore with the given root fingerprint, or nil if not
+// connected. The accountsAndKeystoreLock must be held when calling this function.
+func (backend *Backend) keystoreForFingerprint(fingerprint []byte) keystore.Keystore {
+	return backend.keystores[hex.EncodeToString(fingerprint)]
 }
 
-// registerKeystore registers the given keystore at this backend.
-// if another keystore is already registered, it will be replaced.
+// KeystoreForFingerprint returns the connected keystore with the given root fingerprint, or nil.
+func (backend *Backend) KeystoreForFingerprint(fingerprint []byte) keystore.Keystore {
+	defer backend.accountsAndKeystoreLock.RLock()()
+	return backend.keystoreForFingerprint(fingerprint)
+}
+
+// Keystore returns any one connected keystore, or nil if none is connected. When multiple
+// keystores are connected, which one is returned is not specified. For operations that need a
+// specific keystore, use KeystoreForFingerprint instead.
+func (backend *Backend) Keystore() keystore.Keystore {
+	defer backend.accountsAndKeystoreLock.RLock()()
+	for _, ks := range backend.keystores {
+		return ks
+	}
+	return nil
+}
+
+// hasKeystores returns true if any keystore is connected.
+// The accountsAndKeystoreLock must be held when calling this function.
+func (backend *Backend) hasKeystores() bool {
+	return len(backend.keystores) > 0
+}
+
+// registerKeystore registers the given keystore at this backend. Multiple keystores can be
+// registered simultaneously, keyed by their root fingerprint.
 func (backend *Backend) registerKeystore(keystore keystore.Keystore) {
 	defer backend.accountsAndKeystoreLock.Lock()()
 	// Only for logging, if there is an error we continue anyway.
@@ -736,9 +764,10 @@ func (backend *Backend) registerKeystore(keystore keystore.Keystore) {
 		backend.log.WithError(err).Error("could not retrieve keystore fingerprint")
 		return
 	}
-	log := backend.log.WithField("rootFingerprint", hex.EncodeToString(fingerprint))
+	fpHex := hex.EncodeToString(fingerprint)
+	log := backend.log.WithField("rootFingerprint", fpHex)
 	log.Info("registering keystore")
-	backend.keystore = keystore
+	backend.keystores[fpHex] = keystore
 	backend.Notify(observable.Event{
 		Subject: "keystores",
 		Action:  action.Reload,
@@ -781,31 +810,49 @@ func (backend *Backend) registerKeystore(keystore keystore.Keystore) {
 
 	backend.aoppKeystoreRegistered()
 
-	backend.connectKeystore.onConnect(backend.keystore)
+	backend.connectKeystore.onConnect(keystore)
 
 	go backend.maybeAddHiddenUnusedAccounts()
 }
 
-// DeregisterKeystore removes the registered keystore.
-func (backend *Backend) DeregisterKeystore() {
-	defer backend.accountsAndKeystoreLock.Lock()()
-
-	if backend.keystore == nil {
-		backend.log.Error("deregistering keystore, but no keystore found")
+// deregisterKeystore removes the keystore with the given root fingerprint.
+// The accountsAndKeystoreLock must be held when calling this function.
+func (backend *Backend) deregisterKeystore(fingerprint []byte) {
+	fpHex := hex.EncodeToString(fingerprint)
+	if _, ok := backend.keystores[fpHex]; !ok {
+		backend.log.WithField("rootFingerprint", fpHex).Error("deregistering keystore, but no keystore found with this fingerprint")
 		return
 	}
-	// Only for logging, if there is an error we continue anyway.
-	fingerprint, _ := backend.keystore.RootFingerprint()
-	backend.log.WithField("rootFingerprint", hex.EncodeToString(fingerprint)).Info("deregistering keystore")
-	backend.keystore = nil
+	backend.log.WithField("rootFingerprint", fpHex).Info("deregistering keystore")
+	delete(backend.keystores, fpHex)
 	backend.Notify(observable.Event{
 		Subject: "keystores",
 		Action:  action.Reload,
 	})
 
 	backend.uninitAccounts(false)
-	// TODO: classify accounts by keystore, remove only the ones belonging to the deregistered
-	// keystore. For now we just remove all, then re-add the rest.
+	// Re-init accounts for remaining connected keystores and watch-only accounts.
+	backend.initPersistedAccounts()
+	backend.emitAccountsStatusChanged()
+	backend.connectKeystore.onDisconnect()
+}
+
+// DeregisterKeystore deregisters all connected keystores. Used for test keystores and dev mode.
+func (backend *Backend) DeregisterKeystore() {
+	defer backend.accountsAndKeystoreLock.Lock()()
+	if len(backend.keystores) == 0 {
+		backend.log.Error("deregistering keystores, but no keystores found")
+		return
+	}
+	for fpHex := range backend.keystores {
+		backend.log.WithField("rootFingerprint", fpHex).Info("deregistering keystore")
+		delete(backend.keystores, fpHex)
+	}
+	backend.Notify(observable.Event{
+		Subject: "keystores",
+		Action:  action.Reload,
+	})
+	backend.uninitAccounts(false)
 	backend.initPersistedAccounts()
 	backend.emitAccountsStatusChanged()
 	backend.connectKeystore.onDisconnect()
@@ -815,7 +862,6 @@ func (backend *Backend) DeregisterKeystore() {
 func (backend *Backend) Register(theDevice device.Interface) error {
 	backend.devices[theDevice.Identifier()] = theDevice
 
-	mainKeystore := len(backend.devices) == 1
 	theDevice.SetOnEvent(func(event deviceevent.Event, data interface{}) {
 		backend.events <- deviceEvent{
 			DeviceID: theDevice.Identifier(),
@@ -827,12 +873,19 @@ func (backend *Backend) Register(theDevice device.Interface) error {
 	theDevice.Observe(func(event observable.Event) {
 		switch deviceevent.Event(event.Subject) {
 		case deviceevent.EventKeystoreGone:
-			backend.DeregisterKeystore()
-		case deviceevent.EventKeystoreAvailable:
-			if mainKeystore {
-				// HACK: for device based, only one is supported at the moment.
-				backend.registerKeystore(theDevice.Keystore())
+			if fp, ok := backend.deviceFingerprints[theDevice.Identifier()]; ok {
+				delete(backend.deviceFingerprints, theDevice.Identifier())
+				func() {
+					defer backend.accountsAndKeystoreLock.Lock()()
+					backend.deregisterKeystore(fp)
+				}()
 			}
+		case deviceevent.EventKeystoreAvailable:
+			ks := theDevice.Keystore()
+			if fp, err := ks.RootFingerprint(); err == nil {
+				backend.deviceFingerprints[theDevice.Identifier()] = fp
+			}
+			backend.registerKeystore(ks)
 		}
 		backend.Notify(observable.Event{
 			Subject: fmt.Sprintf(
@@ -870,9 +923,18 @@ func (backend *Backend) Register(theDevice device.Interface) error {
 // Deregister deregisters the device with the given ID from this backend.
 func (backend *Backend) Deregister(deviceID string) {
 	if device, ok := backend.devices[deviceID]; ok {
+		// Use the stored fingerprint — querying the device may fail if it's already unplugged.
+		keystoreFingerprint := backend.deviceFingerprints[deviceID]
+		delete(backend.deviceFingerprints, deviceID)
+
 		backend.onDeviceUninit(deviceID)
 		delete(backend.devices, deviceID)
-		backend.DeregisterKeystore()
+		if keystoreFingerprint != nil {
+			func() {
+				defer backend.accountsAndKeystoreLock.Lock()()
+				backend.deregisterKeystore(keystoreFingerprint)
+			}()
+		}
 
 		backend.Notify(observable.Event{
 			Subject: "devices/registered",
@@ -886,7 +948,6 @@ func (backend *Backend) Deregister(deviceID string) {
 		case bitbox02.BitBox02NovaProductName:
 			backend.banners.Deactivate(banners.KeyBitBox02Nova)
 		}
-
 	}
 }
 

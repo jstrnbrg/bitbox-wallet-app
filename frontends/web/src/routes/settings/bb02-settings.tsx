@@ -36,6 +36,10 @@ type TProps = {
   deviceID: string;
 };
 
+type TContentProps = TProps & {
+  multipleDevices: boolean;
+};
+
 type TWrapperProps = TProps & TPagePropsWithSettingsTabs;
 
 export const StyledSkeleton = () => {
@@ -70,7 +74,7 @@ const BB02Settings = ({ deviceID, devices, hasAccounts }: TWrapperProps) => {
                 hideMobileMenu
                 hasAccounts={hasAccounts}
               >
-                <Content deviceID={deviceID} />
+                <Content deviceID={deviceID} multipleDevices={Object.keys(devices).length > 1} />
               </WithSettingsTabs>
             </ViewContent>
           </View>
@@ -81,7 +85,7 @@ const BB02Settings = ({ deviceID, devices, hasAccounts }: TWrapperProps) => {
   );
 };
 
-const Content = ({ deviceID }: TProps) => {
+const Content = ({ deviceID, multipleDevices }: TContentProps) => {
   const { t } = useTranslation();
 
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfo>();
@@ -102,6 +106,11 @@ const Content = ({ deviceID }: TProps) => {
 
   return (
     <>
+      {multipleDevices && deviceInfo && (
+        <SubTitle className={styles.withMobilePadding}>
+          {`BitBox02 - ${deviceInfo.name}`}
+        </SubTitle>
+      )}
       {/*"Backups" section*/}
       <div className={styles.section}>
         <SubTitle className={styles.withMobilePadding}>{t('deviceSettings.backups.title')}</SubTitle>

@@ -4,6 +4,7 @@ package backend
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"testing"
@@ -97,7 +98,17 @@ func TestVaultSetupLifecycle(t *testing.T) {
 	require.Equal(t, vaults.BIP48AccountKeypath(coinpkg.CodeTBTC, 0), draft.AccountKeypath)
 	require.Empty(t, draft.Participants)
 
-	backend.keystore = signers[0]
+	setTestKeystore := func(ks *software.Keystore) {
+		fp, err := ks.RootFingerprint()
+		require.NoError(t, err)
+		// Clear previous keystores and set the new one.
+		for k := range backend.keystores {
+			delete(backend.keystores, k)
+		}
+		backend.keystores[hex.EncodeToString(fp)] = ks
+	}
+
+	setTestKeystore(signers[0])
 	draft, err = backend.EnrollVaultSigner(draft.ID)
 	require.NoError(t, err)
 	require.Len(t, draft.Participants, 1)
@@ -106,7 +117,7 @@ func TestVaultSetupLifecycle(t *testing.T) {
 	_, err = backend.EnrollVaultSigner(draft.ID)
 	require.ErrorContains(t, err, "signer already enrolled")
 
-	backend.keystore = signers[1]
+	setTestKeystore(signers[1])
 	draft, err = backend.EnrollVaultSigner(draft.ID)
 	require.NoError(t, err)
 	require.Len(t, draft.Participants, 2)
@@ -115,7 +126,7 @@ func TestVaultSetupLifecycle(t *testing.T) {
 	_, err = backend.VaultSetupRecoveryFile(draft.ID)
 	require.ErrorContains(t, err, "not ready for backup")
 
-	backend.keystore = signers[2]
+	setTestKeystore(signers[2])
 	draft, err = backend.EnrollVaultSigner(draft.ID)
 	require.NoError(t, err)
 	require.Len(t, draft.Participants, 3)

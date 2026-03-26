@@ -295,10 +295,6 @@ func (manager *Manager) listen() {
 			if _, ok := manager.devices[deviceID]; ok {
 				continue
 			}
-			// Skip if we already have another device registered and we only support one device.
-			if len(manager.devices) != 0 {
-				continue
-			}
 			var device device.Interface
 			switch {
 			case isBitBox(deviceInfo):

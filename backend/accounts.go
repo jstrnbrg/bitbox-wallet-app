@@ -861,6 +861,11 @@ func (backend *Backend) addAccount(account accounts.Interface) {
 // ConnectKeystore ensures that the keystore with the given root fingerprint is connected,
 // prompts the user if necessary, and returns the keystore instance.
 func (backend *Backend) ConnectKeystore(rootFingerprint []byte) (keystore.Keystore, error) {
+	// Check if the keystore is already connected.
+	if ks := backend.KeystoreForFingerprint(rootFingerprint); ks != nil {
+		return ks, nil
+	}
+
 	type data struct {
 		Type         string `json:"typ"`
 		KeystoreName string `json:"keystoreName"`
@@ -885,7 +890,7 @@ outerLoop:
 			},
 		})
 		ks, err = backend.connectKeystore.connect(
-			backend.Keystore(),
+			backend.KeystoreForFingerprint(rootFingerprint),
 			rootFingerprint,
 			timeout,
 		)
@@ -977,8 +982,16 @@ outerLoop:
 				KeystoreName: "",
 			},
 		})
+		// Check if any of the requested keystores is already connected.
+		var currentKs keystore.Keystore
+		for _, fp := range rootFingerprints {
+			if k := backend.KeystoreForFingerprint(fp); k != nil {
+				currentKs = k
+				break
+			}
+		}
 		ks, err = backend.connectKeystore.connectAny(
-			backend.Keystore(),
+			currentKs,
 			rootFingerprints,
 			timeout,
 		)
@@ -1068,10 +1081,12 @@ func (backend *Backend) createAndAddAccount(coin coinpkg.Coin, persistedConfig *
 		NotesFolder: backend.arguments.NotesDirectoryPath(),
 		ConnectKeystore: func() (keystore.Keystore, error) {
 			if persistedConfig.IsVault() {
-				if backend.keystore != nil {
-					rootFingerprint, err := backend.keystore.RootFingerprint()
-					if err == nil && persistedConfig.SigningConfigurations.ContainsRootFingerprint(rootFingerprint) {
-						return backend.keystore, nil
+				// For vault accounts, check if any participant's keystore is already connected.
+				for _, cfg := range persistedConfig.SigningConfigurations {
+					for _, ki := range cfg.KeyInfos() {
+						if ks := backend.KeystoreForFingerprint(ki.RootFingerprint); ks != nil {
+							return ks, nil
+						}
 					}
 				}
 				if len(persistedConfig.SigningConfigurations) == 0 {
@@ -1091,7 +1106,22 @@ func (backend *Backend) createAndAddAccount(coin coinpkg.Coin, persistedConfig *
 		},
 		ConnectKeystoreByRootFingerprint: backend.ConnectKeystore,
 		CurrentKeystore: func() keystore.Keystore {
-			return backend.keystore
+			if persistedConfig.IsVault() {
+				// For vaults, return any connected participant keystore.
+				for _, cfg := range persistedConfig.SigningConfigurations {
+					for _, ki := range cfg.KeyInfos() {
+						if ks := backend.KeystoreForFingerprint(ki.RootFingerprint); ks != nil {
+							return ks
+						}
+					}
+				}
+				return nil
+			}
+			fp, err := persistedConfig.SigningConfigurations.RootFingerprint()
+			if err != nil {
+				return nil
+			}
+			return backend.KeystoreForFingerprint(fp)
 		},
 		RateUpdater: backend.ratesUpdater,
 		GetMainCurrency: func() string {
@@ -1126,7 +1156,7 @@ func (backend *Backend) createAndAddAccount(coin coinpkg.Coin, persistedConfig *
 		if err != nil {
 			return nil, err
 		}
-		rootFingerprint, err := backend.keystore.RootFingerprint()
+		rootFingerprint, err := persistedConfig.SigningConfigurations.RootFingerprint()
 		if err != nil {
 			return nil, err
 		}
@@ -1357,6 +1387,35 @@ func (backend *Backend) persistETHAccountConfig(
 	}, accountsConfig)
 }
 
+// keystoreForAccount returns the connected keystore that matches the given account's signing
+// configuration, or nil if no matching keystore is connected.
+// The accountsAndKeystoreLock must be held when calling this function.
+func (backend *Backend) keystoreForAccount(account *config.Account) keystore.Keystore {
+	if account.IsVault() {
+		// For vault accounts, return any connected participant keystore.
+		for _, cfg := range account.SigningConfigurations {
+			for _, ki := range cfg.KeyInfos() {
+				if ks := backend.keystoreForFingerprint(ki.RootFingerprint); ks != nil {
+					return ks
+				}
+			}
+		}
+		return nil
+	}
+	rootFingerprint, err := account.SigningConfigurations.RootFingerprint()
+	if err != nil {
+		return nil
+	}
+	return backend.keystoreForFingerprint(rootFingerprint)
+}
+
+// accountHasConnectedKeystore returns true if any connected keystore matches this account's
+// signing configuration.
+// The accountsAndKeystoreLock must be held when calling this function.
+func (backend *Backend) accountHasConnectedKeystore(account *config.Account) bool {
+	return backend.keystoreForAccount(account) != nil
+}
+
 // The accountsAndKeystoreLock must be held when calling this function.
 func (backend *Backend) initPersistedAccounts() {
 	// Only load accounts which belong to connected keystores or for which watchonly is enabled.
@@ -1368,16 +1427,7 @@ func (backend *Backend) initPersistedAccounts() {
 			return true
 		}
 
-		if backend.keystore == nil {
-			return false
-		}
-		rootFingerprint, err := backend.keystore.RootFingerprint()
-		if err != nil {
-			backend.log.WithError(err).Error("Could not retrieve root fingerprint")
-			return false
-		}
-
-		return account.SigningConfigurations.ContainsRootFingerprint(rootFingerprint)
+		return backend.accountHasConnectedKeystore(account)
 	}
 
 	persistedAccounts := backend.config.AccountsConfig()
@@ -1399,7 +1449,8 @@ outer:
 		// Watch-only accounts are loaded regardless, and if later e.g. a BitBox02 BTC-only is
 		// inserted with the same seed as a Multi, we will need to catch that mismatch when the
 		// keystore will be used to e.g. display an Ethereum address etc.
-		if backend.keystore != nil {
+		ks := backend.keystoreForAccount(account)
+		if ks != nil {
 			isWatch, err := persistedAccounts.IsAccountWatchOnly(account)
 			if err != nil {
 				backend.log.WithError(err).Error("Could not retrieve root fingerprint")
@@ -1409,12 +1460,12 @@ outer:
 				switch coin.(type) {
 				case *btc.Coin:
 					for _, cfg := range account.SigningConfigurations {
-						if !backend.keystore.SupportsAccount(coin, cfg.ScriptType()) {
+						if !ks.SupportsAccount(coin, cfg.ScriptType()) {
 							continue outer
 						}
 					}
 				default:
-					if !backend.keystore.SupportsAccount(coin, nil) {
+					if !ks.SupportsAccount(coin, nil) {
 						continue
 					}
 				}
@@ -1495,7 +1546,7 @@ func (backend *Backend) maybeAddP2TR(keystore keystore.Keystore, accounts []*con
 			}
 			if keystore.SupportsAccount(accountCoin, signing.ScriptTypeP2TR) &&
 				account.SigningConfigurations.FindScriptType(signing.ScriptTypeP2TR) == -1 {
-				rootFingerprint, err := backend.keystore.RootFingerprint()
+				rootFingerprint, err := keystore.RootFingerprint()
 				if err != nil {
 					return err
 				}
@@ -1574,15 +1625,7 @@ func (backend *Backend) uninitAccounts(force bool) {
 	accountsConfig := backend.config.AccountsConfig()
 	for _, account := range backend.accounts {
 
-		belongsToKeystore := false
-		if backend.keystore != nil {
-			fingerprint, err := backend.keystore.RootFingerprint()
-			if err != nil {
-				backend.log.WithError(err).Error("could not retrieve keystore fingerprint")
-			} else {
-				belongsToKeystore = account.Config().Config.SigningConfigurations.ContainsRootFingerprint(fingerprint)
-			}
-		}
+		belongsToKeystore := backend.accountHasConnectedKeystore(account.Config().Config)
 
 		isWatchonly, err := accountsConfig.IsAccountWatchOnly(account.Config().Config)
 		if err != nil {
@@ -1628,65 +1671,8 @@ func (backend *Backend) maybeAddHiddenUnusedAccounts() {
 		defer backend.tstMaybeAddHiddenUnusedAccounts()
 	}
 	defer backend.accountsAndKeystoreLock.Lock()()
-	if backend.keystore == nil {
+	if !backend.hasKeystores() {
 		return
-	}
-	// Only load accounts which belong to connected keystores.
-	rootFingerprint, err := backend.keystore.RootFingerprint()
-	if err != nil {
-		backend.log.WithError(err).Error("Could not retrieve root fingerprint")
-		return
-	}
-
-	do := func(cfg *config.AccountsConfig, coinCode coinpkg.Code) *accountsTypes.Code {
-		log := backend.log.
-			WithField("rootFingerprint", hex.EncodeToString(rootFingerprint)).
-			WithField("coinCode", coinCode)
-
-		maxAccountNumber := -1
-		var maxAccount *config.Account
-		for _, accountConfig := range cfg.Accounts {
-			if coinCode != accountConfig.CoinCode {
-				continue
-			}
-			if !accountConfig.SigningConfigurations.ContainsRootFingerprint(rootFingerprint) {
-				continue
-			}
-			accountNumber, err := accountConfig.SigningConfigurations[0].AccountNumber()
-			if err != nil {
-				continue
-			}
-			if maxAccount == nil || int(accountNumber) > maxAccountNumber {
-				maxAccountNumber = int(accountNumber)
-				maxAccount = accountConfig
-			}
-		}
-		// Account scan gap limit:
-		// - Previous account must be used for the next one to be scanned, but:
-		// - The first 5 accounts are always scanned as before we had accounts discovery, the
-		//   BitBoxApp allowed manual creation of 5 accounts, so we need to always scan these
-		nextAccountNumber := maxAccountNumber + 1
-		if maxAccount == nil || maxAccount.Used || nextAccountNumber < accountsHardLimit(coinCode) {
-			accountCode, err := backend.createAndPersistAccountConfig(
-				coinCode,
-				uint16(nextAccountNumber),
-				true,
-				"",
-				backend.keystore,
-				nil,
-				cfg,
-			)
-			if err != nil {
-				log.WithError(err).Error("adding hidden account failed")
-				return nil
-			}
-			log.
-				WithField("accountCode", accountCode).
-				WithField("accountNumber", nextAccountNumber).
-				Info("automatically created hidden account")
-			return &accountCode
-		}
-		return nil
 	}
 
 	// Enable accounts discovery for these coins.
@@ -1699,35 +1685,92 @@ func (backend *Backend) maybeAddHiddenUnusedAccounts() {
 	default:
 		coinCodes = []coinpkg.Code{coinpkg.CodeBTC, coinpkg.CodeLTC}
 	}
-	for _, coinCode := range coinCodes {
-		coin, err := backend.Coin(coinCode)
+
+	// Run discovery for each connected keystore.
+	for fpHex, ks := range backend.keystores {
+		rootFingerprint, err := ks.RootFingerprint()
 		if err != nil {
-			backend.log.Errorf("could not find coin %s", coinCode)
+			backend.log.WithError(err).Error("Could not retrieve root fingerprint")
 			continue
 		}
-		if !backend.keystore.SupportsCoin(coin) {
-			continue
-		}
-		var newAccountCode *accountsTypes.Code
-		err = backend.config.ModifyAccountsConfig(func(cfg *config.AccountsConfig) error {
-			newAccountCode = do(cfg, coinCode)
+
+		do := func(cfg *config.AccountsConfig, coinCode coinpkg.Code) *accountsTypes.Code {
+			log := backend.log.
+				WithField("rootFingerprint", fpHex).
+				WithField("coinCode", coinCode)
+
+			maxAccountNumber := -1
+			var maxAccount *config.Account
+			for _, accountConfig := range cfg.Accounts {
+				if coinCode != accountConfig.CoinCode {
+					continue
+				}
+				if !accountConfig.SigningConfigurations.ContainsRootFingerprint(rootFingerprint) {
+					continue
+				}
+				accountNumber, err := accountConfig.SigningConfigurations[0].AccountNumber()
+				if err != nil {
+					continue
+				}
+				if maxAccount == nil || int(accountNumber) > maxAccountNumber {
+					maxAccountNumber = int(accountNumber)
+					maxAccount = accountConfig
+				}
+			}
+			nextAccountNumber := maxAccountNumber + 1
+			if maxAccount == nil || maxAccount.Used || nextAccountNumber < accountsHardLimit(coinCode) {
+				accountCode, err := backend.createAndPersistAccountConfig(
+					coinCode,
+					uint16(nextAccountNumber),
+					true,
+					"",
+					ks,
+					nil,
+					cfg,
+				)
+				if err != nil {
+					log.WithError(err).Error("adding hidden account failed")
+					return nil
+				}
+				log.
+					WithField("accountCode", accountCode).
+					WithField("accountNumber", nextAccountNumber).
+					Info("automatically created hidden account")
+				return &accountCode
+			}
 			return nil
-		})
-		if err != nil {
-			backend.log.
-				WithField("coinCode", coinCode).
-				WithError(err).
-				Error("maybeAddHiddenUnusedAccounts failed")
-			continue
 		}
-		if newAccountCode != nil {
-			accountConfig := backend.config.AccountsConfig().Lookup(*newAccountCode)
-			if accountConfig == nil {
-				backend.log.Errorf("could not find newly persisted account %s", *newAccountCode)
+
+		for _, coinCode := range coinCodes {
+			coin, err := backend.Coin(coinCode)
+			if err != nil {
+				backend.log.Errorf("could not find coin %s", coinCode)
 				continue
 			}
-			backend.createAndAddAccount(coin, accountConfig)
-			backend.emitAccountsStatusChanged()
+			if !ks.SupportsCoin(coin) {
+				continue
+			}
+			var newAccountCode *accountsTypes.Code
+			err = backend.config.ModifyAccountsConfig(func(cfg *config.AccountsConfig) error {
+				newAccountCode = do(cfg, coinCode)
+				return nil
+			})
+			if err != nil {
+				backend.log.
+					WithField("coinCode", coinCode).
+					WithError(err).
+					Error("maybeAddHiddenUnusedAccounts failed")
+				continue
+			}
+			if newAccountCode != nil {
+				accountConfig := backend.config.AccountsConfig().Lookup(*newAccountCode)
+				if accountConfig == nil {
+					backend.log.Errorf("could not find newly persisted account %s", *newAccountCode)
+					continue
+				}
+				backend.createAndAddAccount(coin, accountConfig)
+				backend.emitAccountsStatusChanged()
+			}
 		}
 	}
 }

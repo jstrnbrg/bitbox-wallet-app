@@ -44,7 +44,6 @@ export const App = () => {
   const prevDevices = usePrevious(devices);
 
   const deviceIDs = Object.keys(devices);
-  const firstDevice = deviceIDs[0];
 
   useEffect(() => {
     return syncNewTxs((meta) => {
@@ -83,7 +82,7 @@ export const App = () => {
     if (
       deviceIDs.length === 0
       && (
-        currentURL.startsWith('/settings/device-settings/')
+        currentURL.startsWith('/settings/device-settings')
         || currentURL.startsWith('/manage-backups/')
       )
     ) {
@@ -91,12 +90,12 @@ export const App = () => {
       return;
     }
     // if device is connected route to device settings
+    const firstDeviceID = deviceIDs[0];
     if (
-      deviceIDs.length === 1
-      && firstDevice
+      firstDeviceID
       && currentURL === '/settings/no-device-connected'
     ) {
-      navigate(`/settings/device-settings/${firstDevice}`);
+      navigate(`/settings/device-settings/${firstDeviceID}`);
       return;
     }
     // if on an account that isn't registered route to /
@@ -126,30 +125,25 @@ export const App = () => {
       return;
     }
 
-  }, [accounts, deviceIDs, firstDevice, navigate]);
+  }, [accounts, deviceIDs, navigate]);
 
   useEffect(() => {
     const oldDeviceIDList = Object.keys(prevDevices || {});
     const newDeviceIDList: string[] = Object.keys(devices);
 
     // If a device is newly connected, we route to the settings.
-    if (
-      newDeviceIDList.length > 0
-      && newDeviceIDList[0] !== oldDeviceIDList[0]
-    ) {
-      // We only route to settings if it is a bb01 or a bb02 bootloader.
-      // The bitbox02 wizard itself is mounted globally (see BitBox02Wizard) so it can be unlocked
-      // anywhere at any time.
-      // We don't bother implementing the same for the bitbox01.
-      // The bb02 bootloader screen is not full screen, so we don't mount it globally and instead
-      // route to it.
-      const firstNewDevice = newDeviceIDList[0];
-      if (firstNewDevice) {
-        const productName = devices[firstNewDevice];
-        if (productName === 'bitbox' || productName === 'bitbox02-bootloader') {
-          navigate(`settings/device-settings/${firstNewDevice}`);
-          return;
-        }
+    // We only route to settings if it is a bb01 or a bb02 bootloader.
+    // The bitbox02 wizard itself is mounted globally (see BitBox02Wizard) so it can be unlocked
+    // anywhere at any time.
+    // We don't bother implementing the same for the bitbox01.
+    // The bb02 bootloader screen is not full screen, so we don't mount it globally and instead
+    // route to it.
+    const newlyConnected = newDeviceIDList.filter(id => !oldDeviceIDList.includes(id));
+    for (const newDeviceID of newlyConnected) {
+      const productName = devices[newDeviceID];
+      if (productName === 'bitbox' || productName === 'bitbox02-bootloader') {
+        navigate(`settings/device-settings/${newDeviceID}`);
+        return;
       }
     }
     maybeRoute();
@@ -163,7 +157,7 @@ export const App = () => {
 
   const activeAccounts = accounts.filter(acct => acct.active);
 
-  const isBitboxBootloader = firstDevice && devices[firstDevice] === 'bitbox02-bootloader';
+  const isBitboxBootloader = deviceIDs.some(id => devices[id] === 'bitbox02-bootloader');
   const showBottomNavigation = (deviceIDs.length > 0 || activeAccounts.length > 0) && !isBitboxBootloader;
 
 

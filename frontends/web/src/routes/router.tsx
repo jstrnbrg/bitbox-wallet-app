@@ -32,6 +32,7 @@ import { General } from './settings/general';
 import { MobileSettings } from './settings/mobile-settings';
 import { About } from './settings/about';
 import { AdvancedSettings } from './settings/advanced-settings';
+import { DeviceList } from './settings/device-list';
 import { Bitsurance } from './bitsurance/bitsurance';
 import { BitsuranceAccount } from './bitsurance/account';
 import { BitsuranceWidget } from './bitsurance/widget';
@@ -245,6 +246,13 @@ export const AppRouter = ({ devices, devicesKey, accounts, activeAccounts }: TAp
     />
   </InjectParams>);
 
+  const DeviceListEl = (
+    <DeviceList
+      devices={devices}
+      hasAccounts={hasAccounts}
+    />
+  );
+
   const ReceiveAccountsSelectorEl = <InjectParams><ReceiveAccountsSelector activeAccounts={activeAccounts}/></InjectParams>;
 
   const AllAccountsEl = <InjectParams><AllAccounts accounts={activeAccounts} /></InjectParams>;
@@ -306,6 +314,7 @@ export const AppRouter = ({ devices, devicesKey, accounts, activeAccounts }: TAp
           <Route path="more" element={MoreEl} />
           <Route path="general" element={GeneralEl} />
           <Route path="about" element={AboutEl} />
+          <Route path="device-settings" element={DeviceListEl} />
           <Route path="device-settings/:deviceID" element={Device} />
           <Route path="no-device-connected" element={NoDevice} />
           <Route path="no-accounts" element={NoDevice} />

@@ -136,6 +136,7 @@ export const Tabs = ({ devices, hideMobileMenu, hasAccounts }: TTabs) => {
   const { t } = useTranslation();
   const { isDarkMode } = useDarkmode();
   const deviceIDs = Object.keys(devices);
+  const singleDeviceID = deviceIDs.length === 1 ? deviceIDs[0] : undefined;
 
   return (
     <div className={styles.container}>
@@ -163,17 +164,25 @@ export const Tabs = ({ devices, hideMobileMenu, hasAccounts }: TTabs) => {
           url="/settings/no-accounts"
         />
       )}
-      {deviceIDs.length ? deviceIDs.map(id => (
+      {deviceIDs.length > 1 ? (
+        <Tab
+          icon={isDarkMode ? <USBLight className={styles.tabIcon} /> : <USBDark className={styles.tabIcon} />}
+          key="devices"
+          hideMobileMenu={hideMobileMenu}
+          name={t('sidebar.devices')}
+          url="/settings/device-settings"
+        />
+      ) : singleDeviceID ? (
         <TabWithVersionCheck
           icon={isDarkMode ? <USBLight className={styles.tabIcon} /> : <USBDark className={styles.tabIcon} />}
-          key={`device-${id}`}
-          deviceID={id}
-          device={devices[id] as TPlatformName}
+          key={`device-${singleDeviceID}`}
+          deviceID={singleDeviceID}
+          device={devices[singleDeviceID] as TPlatformName}
           hideMobileMenu={hideMobileMenu}
           name={t('sidebar.device')}
-          url={`/settings/device-settings/${id}`}
+          url={`/settings/device-settings/${singleDeviceID}`}
         />
-      )) : (
+      ) : (
         <Tab
           icon={isDarkMode ? <USBLight className={styles.tabIcon} /> : <USBDark className={styles.tabIcon} />}
           key="no-device"

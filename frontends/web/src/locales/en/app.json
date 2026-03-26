@@ -1942,6 +1942,7 @@
   "setup": "Setup device",
   "sidebar": {
     "device": "Manage device",
+    "devices": "Manage devices",
     "insurance": "Insurance",
     "leave": "Leave",
     "settings": "Settings",
