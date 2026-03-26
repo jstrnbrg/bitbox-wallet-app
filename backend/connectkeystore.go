@@ -44,6 +44,75 @@ func compareRootFingerprint(ks keystore.Keystore, rootFingerprint []byte) error 
 	return nil
 }
 
+func compareRootFingerprintAny(ks keystore.Keystore, rootFingerprints [][]byte) error {
+	keystoreRootFingerprint, err := ks.RootFingerprint()
+	if err != nil {
+		return err
+	}
+	for _, fp := range rootFingerprints {
+		if bytes.Equal(keystoreRootFingerprint, fp) {
+			return nil
+		}
+	}
+	return ErrWrongKeystore
+}
+
+// connectAny blocks until a keystore with one of the given rootFingerprints is connected. This is
+// used for vault accounts where any participant's keystore is acceptable.
+func (c *connectKeystore) connectAny(
+	currentKeystore keystore.Keystore,
+	rootFingerprints [][]byte,
+	timeout time.Duration,
+) (keystore.Keystore, error) {
+	type result struct {
+		ks  keystore.Keystore
+		err error
+	}
+
+	resultCh := make(chan result)
+	alreadyRunning := func() bool {
+		defer c.RLock()()
+		return c.connectKeystoreCallback != nil
+	}()
+	if alreadyRunning {
+		c.cancel(errReplaced)
+	}
+
+	if currentKeystore != nil {
+		if err := compareRootFingerprintAny(currentKeystore, rootFingerprints); err != nil {
+			return nil, err
+		}
+		return currentKeystore, nil
+	}
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	ctx, cancelTimeout := context.WithTimeout(ctx, timeout)
+	defer cancelTimeout()
+
+	go func() {
+		defer c.Lock()()
+		c.cancelFunc = cancel
+		c.connectKeystoreCallback = func(ks keystore.Keystore) {
+			if err := compareRootFingerprintAny(ks, rootFingerprints); err != nil {
+				resultCh <- result{nil, err}
+				return
+			}
+			resultCh <- result{ks, nil}
+		}
+	}()
+
+	select {
+	case r := <-resultCh:
+		return r.ks, r.err
+	case <-ctx.Done():
+		if context.Cause(ctx) == context.DeadlineExceeded {
+			return nil, errTimeout
+		}
+		return nil, context.Cause(ctx)
+	}
+}
+
 // connect blocks until the keystore with the given rootFingerprint is connected and then returns
 // that keystore. If it is already connected, the it is returned immediately. If the next keystore
 // being connected is not the right fingerprint, `errWrongKeystore` is returned.

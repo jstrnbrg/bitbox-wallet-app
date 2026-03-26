@@ -118,6 +118,7 @@ type Backend interface {
 	Bluetooth() *bluetooth.Bluetooth
 	IsOnline() bool
 	ConnectKeystore([]byte) (keystore.Keystore, error)
+	ConnectVaultKeystore([][]byte) (keystore.Keystore, error)
 }
 
 // Handlers provides a web api to the backend.
@@ -262,6 +263,7 @@ func NewHandlers(
 	getAPIRouterNoError(apiRouter)("/aopp/approve", handlers.postAOPPApprove).Methods("POST")
 	getAPIRouter(apiRouter)("/aopp/choose-account", handlers.postAOPPChooseAccount).Methods("POST")
 	getAPIRouterNoError(apiRouter)("/connect-keystore", handlers.postConnectKeystore).Methods("POST")
+	getAPIRouterNoError(apiRouter)("/connect-vault-keystore", handlers.postConnectVaultKeystore).Methods("POST")
 	getAPIRouterNoError(apiRouter)("/cancel-connect-keystore", handlers.postCancelConnectKeystore).Methods("POST")
 	getAPIRouterNoError(apiRouter)("/set-watchonly", handlers.postSetWatchonly).Methods("POST")
 	getAPIRouterNoError(apiRouter)("/on-auth-setting-changed", handlers.postOnAuthSettingChanged).Methods("POST")
@@ -1935,4 +1937,37 @@ func (handlers *Handlers) postConnectKeystore(r *http.Request) interface{} {
 
 	_, err := handlers.backend.ConnectKeystore([]byte(request.RootFingerprint))
 	return response{Success: err == nil}
+}
+
+func (handlers *Handlers) postConnectVaultKeystore(r *http.Request) interface{} {
+	type response struct {
+		Success              bool   `json:"success"`
+		ConnectedFingerprint string `json:"connectedFingerprint,omitempty"`
+	}
+
+	var request struct {
+		RootFingerprints []jsonp.HexBytes `json:"rootFingerprints"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		return response{Success: false}
+	}
+
+	fingerprints := make([][]byte, len(request.RootFingerprints))
+	for i, fp := range request.RootFingerprints {
+		fingerprints[i] = []byte(fp)
+	}
+
+	ks, err := handlers.backend.ConnectVaultKeystore(fingerprints)
+	if err != nil {
+		return response{Success: false}
+	}
+	connectedFingerprint, err := ks.RootFingerprint()
+	if err != nil {
+		return response{Success: false}
+	}
+	return response{
+		Success:              true,
+		ConnectedFingerprint: hex.EncodeToString(connectedFingerprint),
+	}
 }

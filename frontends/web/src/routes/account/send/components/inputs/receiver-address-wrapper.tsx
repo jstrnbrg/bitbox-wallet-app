@@ -8,7 +8,7 @@ import { InputWithDropdown } from '@/components/forms/input-with-dropdown';
 import * as accountApi from '@/api/account';
 import { getReceiveAddressList, TAccount } from '@/api/account';
 import { statusChanged, syncdone } from '@/api/accountsync';
-import { connectKeystore, getKeystoreFeatures } from '@/api/keystores';
+import { connectKeystore, connectVaultKeystore, getKeystoreFeatures } from '@/api/keystores';
 import { unsubscribe } from '@/utils/subscriptions';
 import { TUnsubscribe } from '@/utils/transport-common';
 import { useMountedRef } from '@/hooks/mount';
@@ -78,10 +78,33 @@ export const ReceiverAddressWrapper = ({
   }) : [];
 
   const checkFirmwareSupport = useCallback(async (selectedAccount: accountApi.TAccount) => {
-    const rootFingerprint = selectedAccount.keystore.rootFingerprint;
-    const connectResult = await connectKeystore(rootFingerprint);
-    if (!connectResult.success) {
-      return false;
+    // For vault accounts, any connected participant is acceptable. Use the vault-aware
+    // connect flow that accepts any of the participants' devices.
+    const isVault = selectedAccount.accountType === 'vault' && selectedAccount.participants;
+    let rootFingerprint: string;
+    if (isVault) {
+      const participantFingerprints = selectedAccount.participants!.map(p => p.rootFingerprint);
+      // If a signer is already connected, use it directly; otherwise prompt for any participant.
+      const connectedSigner = selectedAccount.connectedSigners?.[0];
+      if (connectedSigner) {
+        rootFingerprint = connectedSigner;
+        const connectResult = await connectKeystore(rootFingerprint);
+        if (!connectResult.success) {
+          return false;
+        }
+      } else {
+        const connectResult = await connectVaultKeystore(participantFingerprints);
+        if (!connectResult.success || !connectResult.connectedFingerprint) {
+          return false;
+        }
+        rootFingerprint = connectResult.connectedFingerprint;
+      }
+    } else {
+      rootFingerprint = selectedAccount.keystore.rootFingerprint;
+      const connectResult = await connectKeystore(rootFingerprint);
+      if (!connectResult.success) {
+        return false;
+      }
     }
     const featuresResult = await getKeystoreFeatures(rootFingerprint);
     if (!featuresResult.success) {

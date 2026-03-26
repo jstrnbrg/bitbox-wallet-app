@@ -953,6 +953,90 @@ outerLoop:
 	return ks, err
 }
 
+// ConnectVaultKeystore ensures that a keystore matching one of the given root fingerprints is
+// connected. This is used for vault accounts where any participant's keystore is acceptable.
+// The prompt message is generic, asking the user to connect any device that is part of the vault.
+func (backend *Backend) ConnectVaultKeystore(rootFingerprints [][]byte) (keystore.Keystore, error) {
+	type data struct {
+		Type         string `json:"typ"`
+		KeystoreName string `json:"keystoreName"`
+		ErrorCode    string `json:"errorCode,omitempty"`
+		ErrorMessage string `json:"errorMessage"`
+	}
+	var ks keystore.Keystore
+	var err error
+	timeout := 20 * time.Minute
+outerLoop:
+	for {
+		backend.Notify(observable.Event{
+			Subject: "connect-keystore",
+			Action:  action.Replace,
+			Object: data{
+				Type: "connect",
+				// Empty keystoreName results in a generic prompt on the frontend.
+				KeystoreName: "",
+			},
+		})
+		ks, err = backend.connectKeystore.connectAny(
+			backend.Keystore(),
+			rootFingerprints,
+			timeout,
+		)
+		if err == nil || errp.Cause(err) != ErrWrongKeystore {
+			break
+		} else {
+			backend.Notify(observable.Event{
+				Subject: "connect-keystore",
+				Action:  action.Replace,
+				Object: data{
+					Type:         "error",
+					ErrorCode:    err.Error(),
+					ErrorMessage: "",
+				},
+			})
+			c := make(chan bool)
+			backend.connectKeystore.SetRetryConnect(func(retry bool) {
+				c <- retry
+			})
+			select {
+			case retry := <-c:
+				if !retry {
+					err = errp.ErrUserAbort
+					break outerLoop
+				}
+			case <-time.After(timeout):
+				backend.connectKeystore.SetRetryConnect(nil)
+				err = errTimeout
+				break outerLoop
+			}
+		}
+	}
+	switch {
+	case errp.Cause(err) == errReplaced:
+	case err == nil || errp.Cause(err) == errp.ErrUserAbort:
+		backend.Notify(observable.Event{
+			Subject: "connect-keystore",
+			Action:  action.Replace,
+			Object:  nil,
+		})
+	default:
+		var errorCode = ""
+		if errp.Cause(err) == errTimeout {
+			errorCode = err.Error()
+		}
+		backend.Notify(observable.Event{
+			Subject: "connect-keystore",
+			Action:  action.Replace,
+			Object: data{
+				Type:         "error",
+				ErrorMessage: err.Error(),
+				ErrorCode:    errorCode,
+			},
+		})
+	}
+	return ks, err
+}
+
 // gapLimits returns the gap limits to use, with arguments having priority over config settings.
 func (backend *Backend) gapLimits() *btctypes.GapLimits {
 	gapLimits := backend.arguments.GapLimits()
