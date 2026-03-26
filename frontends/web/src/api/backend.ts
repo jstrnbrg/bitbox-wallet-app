@@ -10,6 +10,7 @@ export type TCoin = {
   name: string;
   canAddAccount: boolean;
   suggestedAccountName: string;
+  accountTypes: Array<'standard' | 'vault'>;
 };
 
 // In other places we use type { FailResponse, SuccessResponse } from './response'

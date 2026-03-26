@@ -32,6 +32,16 @@ var witnessV0Size = wire.VarIntSerializeSize(2) +
 	wire.VarIntSerializeSize(signatureSize) + signatureSize +
 	wire.VarIntSerializeSize(pubkeySize) + pubkeySize
 
+// 2-of-3 multisig witness:
+// - OP_0 dummy for CHECKMULTISIG bug
+// - 2 signatures
+// - serialized witness script (OP_2 <33-byte pk> <33-byte pk> <33-byte pk> OP_3 OP_CHECKMULTISIG)
+var witnessP2WSHMultisig2of3Size = wire.VarIntSerializeSize(4) +
+	wire.VarIntSerializeSize(0) +
+	wire.VarIntSerializeSize(signatureSize) + signatureSize +
+	wire.VarIntSerializeSize(signatureSize) + signatureSize +
+	wire.VarIntSerializeSize(105) + 105
+
 // sigScriptWitnessSize returns the maximum possible sigscript/witness size for a given address type.
 // If there is no witness, 0 is returned.
 func sigScriptWitnessSize(configuration *signing.Configuration) (int, int) {
@@ -50,6 +60,8 @@ func sigScriptWitnessSize(configuration *signing.Configuration) (int, int) {
 		return 1 + redeemScriptSize, witnessV0Size
 	case signing.ScriptTypeP2WPKH:
 		return 0, witnessV0Size
+	case signing.ScriptTypeP2WSH:
+		return 0, witnessP2WSHMultisig2of3Size
 	case signing.ScriptTypeP2TR:
 		// Taproot key spend: <64 byte sig>
 		return 0, wire.VarIntSerializeSize(1) + wire.VarIntSerializeSize(64) + 64

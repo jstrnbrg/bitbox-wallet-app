@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { getAccountsByKeystore } from '@/routes/account/utils';
+import { getAccountsByKeystore, getStandardAccounts, getVaultAccounts } from '@/routes/account/utils';
 import * as accountAPI from '@/api/account';
 import * as backendAPI from '@/api/backend';
 import { alertUser } from '@/components/alert/Alert';
@@ -43,6 +43,7 @@ export const ManageAccounts = ({ accounts, devices, hasAccounts }: Props) => {
   const [editErrorMessage, setEditErrorMessage] = useState<string | undefined>(undefined);
   const [showTokens, setShowTokens] = useState<TShowTokens>({});
   const [currentlyEditedAccount, setCurrentlyEditedAccount] = useState<accountAPI.TAccount | undefined>(undefined);
+  const [vaultDrafts, setVaultDrafts] = useState<accountAPI.TVaultDraft[]>([]);
 
   const erc20Tokens: Readonly<accountAPI.Terc20Token[]> = [
     { code: 'eth-erc20-usdt', name: 'Tether USD', unit: 'USDT' },
@@ -147,6 +148,16 @@ export const ManageAccounts = ({ accounts, devices, hasAccounts }: Props) => {
       });
   };
 
+  useEffect(() => {
+    accountAPI.getVaultSetupDrafts()
+      .then(result => {
+        if (result.success) {
+          setVaultDrafts(result.drafts);
+        }
+      })
+      .catch(console.error);
+  }, [accounts]);
+
   const renderAccounts = (accounts: accountAPI.TAccount[]) => {
     return accounts.filter(account => !account.isToken).map(account => {
       const active = account.active;
@@ -212,7 +223,9 @@ export const ManageAccounts = ({ accounts, devices, hasAccounts }: Props) => {
     });
   };
 
-  const accountsByKeystore = getAccountsByKeystore(accounts);
+  const standardAccounts = getStandardAccounts(accounts);
+  const vaultAccounts = getVaultAccounts(accounts);
+  const accountsByKeystore = getAccountsByKeystore(standardAccounts);
   return (
     <GuideWrapper>
       <GuidedContent>
@@ -231,13 +244,21 @@ export const ManageAccounts = ({ accounts, devices, hasAccounts }: Props) => {
           <View fullscreen={false}>
             <ViewContent>
               <WithSettingsTabs devices={devices} hideMobileMenu hasAccounts={hasAccounts}>
-                <Button
-                  className={style.addAccountBtn}
-                  primary
-                  onClick={() => navigate('/add-account')}>
-                  <Plus className="m-right-quarter" width="12" height="12" />
-                  {t('addAccount.title')}
-                </Button>
+                <div className={style.actions}>
+                  <Button
+                    className={style.addAccountBtn}
+                    primary
+                    onClick={() => navigate('/add-account')}>
+                    <Plus className="m-right-quarter" width="12" height="12" />
+                    {t('addAccount.title')}
+                  </Button>
+                  <Button
+                    className={[style.addAccountBtn, style.importAccountBtn].join(' ')}
+                    secondary
+                    onClick={() => navigate('/add-account/vault')}>
+                    {t('manageAccounts.importAccount')}
+                  </Button>
+                </div>
                 <Grid col="1">
                   { accountsByKeystore.map(keystore => (
                     <Column
@@ -253,6 +274,84 @@ export const ManageAccounts = ({ accounts, devices, hasAccounts }: Props) => {
                       {renderAccounts(keystore.accounts)}
                     </Column>
                   )) }
+                  {(vaultAccounts.length > 0 || vaultDrafts.length > 0) && (
+                    <Column asCard>
+                      <div className={style.walletHeader}>
+                        <h3 className={style.sectionTitle}>{t('manageAccounts.vaults')}</h3>
+                      </div>
+                      {vaultAccounts.map(account => (
+                        <div key={account.code} className={style.setting}>
+                          <div
+                            className={`
+                              ${style.acccountLink || ''}
+                              ${account.active && style.accountActive || ''}
+                            `}
+                            onClick={() => account.active && navigate(`/account/${account.code}`)}>
+                            <Logo
+                              stacked
+                              active={account.active}
+                              className={`${style.coinLogo || ''} m-right-half`}
+                              coinCode={account.coinCode}
+                              alt={account.coinUnit}
+                            />
+                            <span className={!account.active ? style.accountNameInactive : ''}>
+                              {account.name}
+                              {' '}
+                              <span className="unit">(Vault)</span>
+                            </span>
+                          </div>
+                          <div className={style.editAccount}>
+                            <Button
+                              className={style.editBtn}
+                              onClick={() => setCurrentlyEditedAccount(account)}
+                              transparent>
+                              <EditActive />
+                              <span className="hide-on-small">
+                                {t('manageAccounts.editAccount')}
+                              </span>
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                      {vaultDrafts.map(draft => (
+                        <div key={draft.id} className={style.setting}>
+                          <div className={style.acccountLink}>
+                            <Logo
+                              stacked
+                              active
+                              className={`${style.coinLogo || ''} m-right-half`}
+                              coinCode={draft.network}
+                              alt={draft.name}
+                            />
+                            <span>
+                              {draft.name}
+                              {' '}
+                              <span className="unit">
+                                ({t('manageAccounts.incomplete')}: {draft.participants.length}/3)
+                              </span>
+                            </span>
+                          </div>
+                          <div className={style.editAccount}>
+                            <Button
+                              className={style.editBtn}
+                              onClick={() => navigate(`/add-account/vault/${draft.id}`)}
+                              transparent>
+                              {t('manageAccounts.resume')}
+                            </Button>
+                            <Button
+                              className={style.editBtn}
+                              onClick={async () => {
+                                await accountAPI.discardVaultSetup(draft.id);
+                                setVaultDrafts(current => current.filter(currentDraft => currentDraft.id !== draft.id));
+                              }}
+                              transparent>
+                              {t('manageAccounts.discard')}
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </Column>
+                  )}
                 </Grid>
                 {currentlyEditedAccount && (
                   <Dialog

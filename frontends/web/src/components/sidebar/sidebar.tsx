@@ -6,12 +6,13 @@ import { useTranslation } from 'react-i18next';
 import { useKeystores } from '@/hooks/backend';
 import type { TDevices } from '@/api/devices';
 import type { TAccount } from '@/api/account';
+import { getVaultSetupDrafts, TVaultDraft } from '@/api/account';
 import { deregisterTest } from '@/api/keystores';
 import { getVersion } from '@/api/bitbox02';
 import { debug } from '@/utils/env';
 import { AppLogoInverted, Logo } from '@/components/icon/logo';
 import { CloseXWhite, CogGray, Coins, Device, Eject, Linechart, RedDot, ShieldGray } from '@/components/icon';
-import { getAccountsByKeystore } from '@/routes/account/utils';
+import { getAccountsByKeystore, getStandardAccounts, getVaultAccounts } from '@/routes/account/utils';
 import { SkipForTesting } from '@/routes/device/components/skipfortesting';
 import { AppContext } from '@/contexts/AppContext';
 import { Button } from '@/components/forms';
@@ -59,6 +60,7 @@ const Sidebar = ({
   const { t } = useTranslation();
   const { pathname } = useLocation();
   const [ canUpgrade, setCanUpgrade ] = useState(false);
+  const [vaultDrafts, setVaultDrafts] = useState<TVaultDraft[]>([]);
   const { activeSidebar, toggleSidebar } = useContext(AppContext);
 
   const deviceIDs: string[] = Object.keys(devices);
@@ -81,6 +83,16 @@ const Sidebar = ({
     checkUpgradableDevices();
   }, [devices]);
 
+  useEffect(() => {
+    getVaultSetupDrafts()
+      .then(result => {
+        if (result.success) {
+          setVaultDrafts(result.drafts);
+        }
+      })
+      .catch(console.error);
+  }, [accounts, pathname]);
+
   const keystores = useKeystores();
 
   const handleSidebarItemClick = (event: React.SyntheticEvent) => {
@@ -90,7 +102,9 @@ const Sidebar = ({
     }
   };
 
-  const accountsByKeystore = getAccountsByKeystore(accounts);
+  const standardAccounts = getStandardAccounts(accounts);
+  const vaultAccounts = getVaultAccounts(accounts);
+  const accountsByKeystore = getAccountsByKeystore(standardAccounts);
   const userInSpecificAccountMarketPage = (pathname.startsWith('/market'));
 
   return (
@@ -141,6 +155,37 @@ const Sidebar = ({
             ))}
           </div>
         )) }
+
+        {(vaultAccounts.length > 0 || vaultDrafts.length > 0) && (
+          <div key="vaults">
+            <div className={style.sidebarHeaderContainer}>
+              <div className={style.sidebarHeader}>
+                {t('sidebar.vaults')}
+              </div>
+            </div>
+            {vaultAccounts.map(acc => (
+              <GetAccountLink key={`vault-account-${acc.code}`} {...acc} handleSidebarItemClick={handleSidebarItemClick} />
+            ))}
+            {vaultDrafts.map(draft => {
+              const active = pathname === `/add-account/vault/${draft.id}`;
+              return (
+                <div className={style.sidebarItem} key={`vault-draft-${draft.id}`}>
+                  <Link
+                    className={active ? style.sidebarActive : ''}
+                    to={`/add-account/vault/${draft.id}`}
+                    onClick={handleSidebarItemClick}
+                    title={draft.name}>
+                    <Logo stacked coinCode={draft.network} alt={draft.name} />
+                    <span className={style.sidebarLabel}>
+                      {draft.name || t('addAccount.vault.title')}
+                      <RedDot className={style.canUpgradeDot} width={8} height={8} />
+                    </span>
+                  </Link>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         <div key="services" className={[style.sidebarHeaderContainer, style.end].join(' ')}></div>
         { accounts.length ? (

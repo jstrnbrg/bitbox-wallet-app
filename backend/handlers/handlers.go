@@ -36,6 +36,7 @@ import (
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/keystore"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/market"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/rates"
+	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/vaults"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/versioninfo"
 	utilConfig "github.com/BitBoxSwiss/bitbox-wallet-app/util/config"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/util/errp"
@@ -90,6 +91,15 @@ type Backend interface {
 	SupportedCoins(keystore.Keystore) []coinpkg.Code
 	CanAddAccount(coinpkg.Code, keystore.Keystore) (string, bool)
 	CreateAndPersistAccountConfig(coinCode coinpkg.Code, name string, keystore keystore.Keystore) (accountsTypes.Code, error)
+	StartVaultSetup(coinCode coinpkg.Code, name string) (*vaults.Draft, error)
+	VaultSetupDrafts() ([]*vaults.Draft, error)
+	VaultSetupDraft(id string) (*vaults.Draft, error)
+	EnrollVaultSigner(id string) (*vaults.Draft, error)
+	VaultSetupRecoveryFile(id string) (*vaults.RecoveryFile, error)
+	CompleteVaultSetup(id string, name string, recoveryAcknowledged bool) (accountsTypes.Code, error)
+	DiscardVaultSetup(id string) error
+	ImportVaultRecovery(recovery *vaults.RecoveryFile, name string) (accountsTypes.Code, error)
+	ExportVaultRecoveryFile(accountCode accountsTypes.Code) (*vaults.RecoveryFile, error)
 	SetAccountActive(accountCode accountsTypes.Code, active bool) error
 	SetTokenActive(accountCode accountsTypes.Code, tokenCode string, active bool) error
 	RenameAccount(accountCode accountsTypes.Code, name string) error
@@ -215,6 +225,14 @@ func NewHandlers(
 	getAPIRouterNoError(apiRouter)("/accounts/reinitialize", handlers.postAccountsReinitialize).Methods("POST")
 	getAPIRouterNoError(apiRouter)("/chart-data", handlers.getChartData).Methods("GET")
 	getAPIRouterNoError(apiRouter)("/supported-coins", handlers.getSupportedCoins).Methods("GET")
+	getAPIRouterNoError(apiRouter)("/vault-setup/start", handlers.postVaultSetupStart).Methods("POST")
+	getAPIRouterNoError(apiRouter)("/vault-setup/drafts", handlers.getVaultSetupDrafts).Methods("GET")
+	getAPIRouterNoError(apiRouter)("/vault-setup/{id}", handlers.getVaultSetupDraft).Methods("GET")
+	getAPIRouterNoError(apiRouter)("/vault-setup/{id}/enroll-signer", handlers.postVaultSetupEnrollSigner).Methods("POST")
+	getAPIRouterNoError(apiRouter)("/vault-setup/{id}/recovery-file", handlers.getVaultSetupRecoveryFile).Methods("GET")
+	getAPIRouterNoError(apiRouter)("/vault-setup/{id}/complete", handlers.postVaultSetupComplete).Methods("POST")
+	getAPIRouterNoError(apiRouter)("/vault-setup/{id}/discard", handlers.postVaultSetupDiscard).Methods("POST")
+	getAPIRouterNoError(apiRouter)("/vault-import", handlers.postVaultImport).Methods("POST")
 	getAPIRouter(apiRouter)("/test/register", handlers.postRegisterTestKeystore).Methods("POST")
 	getAPIRouterNoError(apiRouter)("/test/deregister", handlers.postDeregisterTestKeystore).Methods("POST")
 	getAPIRouterNoError(apiRouter)("/coins/convert-to-plain-fiat", handlers.getConvertToPlainFiat).Methods("GET")
@@ -391,6 +409,15 @@ type accountJSON struct {
 	BlockExplorerAddressPrefix string             `json:"blockExplorerAddressPrefix,omitempty"`
 	// Number of the account per coin per keystore, starting at 0. Nil if unknown.
 	AccountNumber *uint16 `json:"accountNumber"`
+	AccountType   string  `json:"accountType,omitempty"`
+	PolicyID      string  `json:"policyId,omitempty"`
+	Participants  []struct {
+		Name            string `json:"name,omitempty"`
+		RootFingerprint string `json:"rootFingerprint"`
+		Keypath         string `json:"keypath"`
+		Xpub            string `json:"xpub"`
+	} `json:"participants,omitempty"`
+	ConnectedSigners []string `json:"connectedSigners,omitempty"`
 }
 
 func newAccountJSON(
@@ -432,6 +459,7 @@ func newAccountJSON(
 		BlockExplorerTxPrefix:      account.Coin().BlockExplorerTransactionURLPrefix(),
 		BlockExplorerAddressPrefix: blockExplorerAddressPrefix,
 		AccountNumber:              accountNumberPtr,
+		AccountType:                string(account.Config().Config.Type()),
 	}
 }
 
@@ -670,6 +698,55 @@ func (handlers *Handlers) getAccounts(*http.Request) interface{} {
 					AccountCode: backend.Erc20AccountCode(account.Config().Config.Code, tokenCode),
 				})
 			}
+		}
+
+		if persistedAccount.IsVault() {
+			if len(persistedAccount.SigningConfigurations) == 0 || persistedAccount.SigningConfigurations[0].BitcoinDescriptor == nil {
+				handlers.log.WithField("code", account.Config().Config.Code).Error("vault account missing descriptor")
+				continue
+			}
+			keyInfos := persistedAccount.SigningConfigurations[0].KeyInfos()
+			var primaryKeystore config.Keystore
+			if len(keyInfos) > 0 {
+				if ks, err := persistedAccounts.LookupKeystore(keyInfos[0].RootFingerprint); err == nil {
+					primaryKeystore = *ks
+				} else {
+					primaryKeystore = config.Keystore{
+						RootFingerprint: jsonp.HexBytes(keyInfos[0].RootFingerprint),
+					}
+				}
+			}
+			accountJSON := newAccountJSON(primaryKeystore, account, activeTokens, false)
+			accountJSON.PolicyID = persistedAccount.PolicyID
+			for index, keyInfo := range keyInfos {
+				name := ""
+				if keystore, err := persistedAccounts.LookupKeystore(keyInfo.RootFingerprint); err == nil {
+					name = keystore.Name
+				}
+				accountJSON.Participants = append(accountJSON.Participants, struct {
+					Name            string `json:"name,omitempty"`
+					RootFingerprint string `json:"rootFingerprint"`
+					Keypath         string `json:"keypath"`
+					Xpub            string `json:"xpub"`
+				}{
+					Name:            name,
+					RootFingerprint: hex.EncodeToString(keyInfo.RootFingerprint),
+					Keypath:         keyInfo.AbsoluteKeypath.Encode(),
+					Xpub:            keyInfo.ExtendedPublicKey.String(),
+				})
+				if index == 0 && primaryKeystore.Name == "" {
+					accountJSON.Keystore.Name = name
+				}
+			}
+			if connectedKeystore := handlers.backend.Keystore(); connectedKeystore != nil {
+				rootFingerprint, err := connectedKeystore.RootFingerprint()
+				if err == nil && persistedAccount.SigningConfigurations.ContainsRootFingerprint(rootFingerprint) {
+					accountJSON.ConnectedSigners = []string{hex.EncodeToString(rootFingerprint)}
+					accountJSON.Keystore.Connected = true
+				}
+			}
+			accounts = append(accounts, accountJSON)
+			continue
 		}
 
 		rootFingerprint, err := persistedAccount.SigningConfigurations.RootFingerprint()
@@ -1171,6 +1248,7 @@ func (handlers *Handlers) getSupportedCoins(*http.Request) interface{} {
 		Name                 string       `json:"name"`
 		CanAddAccount        bool         `json:"canAddAccount"`
 		SuggestedAccountName string       `json:"suggestedAccountName"`
+		AccountTypes         []string     `json:"accountTypes"`
 	}
 	keystore := handlers.backend.Keystore()
 	if keystore == nil {
@@ -1188,9 +1266,155 @@ func (handlers *Handlers) getSupportedCoins(*http.Request) interface{} {
 			Name:                 coin.Name(),
 			CanAddAccount:        canAddAccount,
 			SuggestedAccountName: suggestedAccountName,
+			AccountTypes: func() []string {
+				switch coinCode {
+				case coinpkg.CodeBTC, coinpkg.CodeTBTC, coinpkg.CodeRBTC:
+					return []string{"standard", "vault"}
+				default:
+					return []string{"standard"}
+				}
+			}(),
 		})
 	}
 	return result
+}
+
+func (handlers *Handlers) postVaultSetupStart(r *http.Request) interface{} {
+	type response struct {
+		Success      bool          `json:"success"`
+		Draft        *vaults.Draft `json:"draft,omitempty"`
+		ErrorMessage string        `json:"errorMessage,omitempty"`
+	}
+	var request struct {
+		CoinCode coinpkg.Code `json:"coinCode"`
+		Name     string       `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	draft, err := handlers.backend.StartVaultSetup(request.CoinCode, request.Name)
+	if err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	return response{Success: true, Draft: draft}
+}
+
+func (handlers *Handlers) getVaultSetupDrafts(*http.Request) interface{} {
+	type response struct {
+		Success      bool            `json:"success"`
+		Drafts       []*vaults.Draft `json:"drafts"`
+		ErrorMessage string          `json:"errorMessage,omitempty"`
+	}
+	drafts, err := handlers.backend.VaultSetupDrafts()
+	if err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	return response{Success: true, Drafts: drafts}
+}
+
+func (handlers *Handlers) getVaultSetupDraft(r *http.Request) interface{} {
+	type response struct {
+		Success      bool          `json:"success"`
+		Draft        *vaults.Draft `json:"draft,omitempty"`
+		ErrorMessage string        `json:"errorMessage,omitempty"`
+	}
+	draft, err := handlers.backend.VaultSetupDraft(mux.Vars(r)["id"])
+	if err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	return response{Success: true, Draft: draft}
+}
+
+func (handlers *Handlers) postVaultSetupEnrollSigner(r *http.Request) interface{} {
+	type response struct {
+		Success      bool          `json:"success"`
+		Draft        *vaults.Draft `json:"draft,omitempty"`
+		ErrorMessage string        `json:"errorMessage,omitempty"`
+		ErrorCode    string        `json:"errorCode,omitempty"`
+	}
+	draft, err := handlers.backend.EnrollVaultSigner(mux.Vars(r)["id"])
+	if err != nil {
+		resp := response{Success: false, ErrorMessage: err.Error()}
+		if code, ok := errp.Cause(err).(errp.ErrorCode); ok {
+			resp.ErrorCode = string(code)
+		}
+		if errp.Cause(err) == keystore.ErrUnsupportedFeature {
+			resp.ErrorCode = string(keystore.ErrUnsupportedFeature)
+		}
+		return resp
+	}
+	return response{Success: true, Draft: draft}
+}
+
+func (handlers *Handlers) getVaultSetupRecoveryFile(r *http.Request) interface{} {
+	type response struct {
+		Success      bool                 `json:"success"`
+		RecoveryFile *vaults.RecoveryFile `json:"recoveryFile,omitempty"`
+		ErrorMessage string               `json:"errorMessage,omitempty"`
+	}
+	recoveryFile, err := handlers.backend.VaultSetupRecoveryFile(mux.Vars(r)["id"])
+	if err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	return response{Success: true, RecoveryFile: recoveryFile}
+}
+
+func (handlers *Handlers) postVaultSetupComplete(r *http.Request) interface{} {
+	type response struct {
+		Success      bool               `json:"success"`
+		AccountCode  accountsTypes.Code `json:"accountCode,omitempty"`
+		ErrorMessage string             `json:"errorMessage,omitempty"`
+	}
+	var request struct {
+		Name                 string `json:"name"`
+		RecoveryAcknowledged bool   `json:"recoveryAcknowledged"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	accountCode, err := handlers.backend.CompleteVaultSetup(
+		mux.Vars(r)["id"],
+		request.Name,
+		request.RecoveryAcknowledged,
+	)
+	if err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	return response{Success: true, AccountCode: accountCode}
+}
+
+func (handlers *Handlers) postVaultSetupDiscard(r *http.Request) interface{} {
+	type response struct {
+		Success      bool   `json:"success"`
+		ErrorMessage string `json:"errorMessage,omitempty"`
+	}
+	if err := handlers.backend.DiscardVaultSetup(mux.Vars(r)["id"]); err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	return response{Success: true}
+}
+
+func (handlers *Handlers) postVaultImport(r *http.Request) interface{} {
+	type response struct {
+		Success      bool               `json:"success"`
+		AccountCode  accountsTypes.Code `json:"accountCode,omitempty"`
+		ErrorMessage string             `json:"errorMessage,omitempty"`
+	}
+	var request struct {
+		Name         string               `json:"name"`
+		RecoveryFile *vaults.RecoveryFile `json:"recoveryFile"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	if request.RecoveryFile == nil {
+		return response{Success: false, ErrorMessage: "missing recovery file"}
+	}
+	accountCode, err := handlers.backend.ImportVaultRecovery(request.RecoveryFile, request.Name)
+	if err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	return response{Success: true, AccountCode: accountCode}
 }
 
 func (handlers *Handlers) getMarketRegionCodes(r *http.Request) interface{} {

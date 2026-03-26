@@ -40,6 +40,27 @@ export const SigningConfiguration = ({ account, info, code, signingConfigIndex, 
     }
   }, [code, account.coinCode]);
 
+  if (info.bitcoinDescriptor !== undefined) {
+    return (
+      <div className={style.address}>
+        <div className={style.details}>
+          <div className={[style.entry, style.largeEntry].filter(Boolean).join(' ')}>
+            <strong className="m-right-half">
+              Descriptor:
+            </strong>
+            <CopyableInput
+              alignLeft
+              flexibleHeight
+              value={info.bitcoinDescriptor.descriptor} />
+          </div>
+        </div>
+        <div className={style.buttons}>
+          {children}
+        </div>
+      </div>
+    );
+  }
+
   const getSimpleInfo = (): TBitcoinSimple | TEthereumSimple => {
     if (info.bitcoinSimple !== undefined) {
       return info.bitcoinSimple;

@@ -20,12 +20,31 @@
     min-height: 90px;
 }
 
+.accountTypeOptions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-half);
+    margin-bottom: var(--space-half);
+    text-align: left;
+}
+
+.accountTypeDescription {
+    color: var(--color-secondary);
+    display: block;
+    font-weight: 400;
+    margin-top: var(--space-eight);
+}
+
 .successMessage {
     color: var(--color-secondary);
 }
 
 .successMessage strong {
     color: var(--color-default);
+}
+
+.stepsSpacing {
+    margin-bottom: var(--space-half);
 }
 
 @media screen and (max-width: 640px) {

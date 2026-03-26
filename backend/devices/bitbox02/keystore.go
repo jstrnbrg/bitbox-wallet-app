@@ -3,6 +3,10 @@
 package bitbox02
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/accounts"
@@ -31,6 +35,100 @@ type keystore struct {
 
 	rootFingerMu sync.Mutex
 	rootFinger   []byte // cached result of RootFingerprint
+}
+
+func (keystore *keystore) btcMultisigScriptConfig(
+	configuration *signing.Configuration,
+) (*messages.BTCScriptConfigWithKeypath, error) {
+	if configuration.BitcoinDescriptor == nil {
+		return nil, errp.New("bitcoin descriptor configuration missing")
+	}
+	walletPolicy, err := configuration.BitcoinDescriptor.ToWalletPolicy()
+	if err != nil {
+		return nil, err
+	}
+	accountKeypath, err := configuration.BitcoinDescriptor.AccountKeypath()
+	if err != nil {
+		return nil, err
+	}
+	threshold, err := configuration.BitcoinDescriptor.Threshold()
+	if err != nil {
+		return nil, err
+	}
+	rootFingerprint, err := keystore.RootFingerprint()
+	if err != nil {
+		return nil, err
+	}
+
+	xpubs := make([]string, len(walletPolicy.Keys))
+	ourXPubIndex := uint32(0)
+	for i, keyInfo := range walletPolicy.Keys {
+		xpubs[i] = keyInfo.ExtendedPublicKey.String()
+		if bytes.Equal(keyInfo.RootFingerprint, rootFingerprint) {
+			ourXPubIndex = uint32(i)
+		}
+	}
+	scriptConfig, err := firmware.NewBTCScriptConfigMultisig(
+		uint32(threshold),
+		xpubs,
+		ourXPubIndex,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &messages.BTCScriptConfigWithKeypath{
+		ScriptConfig: scriptConfig,
+		Keypath:      accountKeypath.ToUInt32(),
+	}, nil
+}
+
+func (keystore *keystore) ensureBTCScriptConfigRegistered(
+	coin coinpkg.Coin,
+	configuration *signing.Configuration,
+	name string,
+) error {
+	if configuration.BitcoinDescriptor == nil {
+		return nil
+	}
+	msgCoin, ok := btcMsgCoinMap[coin.Code()]
+	if !ok {
+		return errp.New("unsupported coin")
+	}
+	scriptConfigWithKeypath, err := keystore.btcMultisigScriptConfig(configuration)
+	if err != nil {
+		return err
+	}
+	registered, err := keystore.device.BTCIsScriptConfigRegistered(
+		msgCoin,
+		scriptConfigWithKeypath.ScriptConfig,
+		scriptConfigWithKeypath.Keypath,
+	)
+	if err != nil {
+		return err
+	}
+	if registered {
+		return nil
+	}
+	name = btcPolicyRegistrationName(name, configuration)
+	return keystore.device.BTCRegisterScriptConfig(
+		msgCoin,
+		scriptConfigWithKeypath.ScriptConfig,
+		scriptConfigWithKeypath.Keypath,
+		name,
+	)
+}
+
+func btcPolicyRegistrationName(name string, configuration *signing.Configuration) string {
+	name = strings.TrimSpace(name)
+	if name != "" && len(name) <= 30 {
+		return name
+	}
+	descriptor := configuration.String()
+	if configuration.BitcoinDescriptor != nil {
+		descriptor = configuration.BitcoinDescriptor.Descriptor
+	}
+	sum := sha256.Sum256([]byte(descriptor))
+	return fmt.Sprintf("Vault %x", sum[:4])
 }
 
 // Type implements keystore.Keystore.
@@ -88,10 +186,13 @@ func (keystore *keystore) SupportsAccount(coin coinpkg.Coin, meta interface{}) b
 	switch coin.(type) {
 	case *btc.Coin:
 		scriptType := meta.(signing.ScriptType)
-		if scriptType == signing.ScriptTypeP2TR {
-			// Taproot available since v9.10.0.
+		if scriptType == signing.ScriptTypeP2TR || scriptType == signing.ScriptTypeP2WSH {
+			// Taproot available since v9.10.0, policy wallets require v9.15.0.
 			switch coin.Code() {
 			case coinpkg.CodeBTC, coinpkg.CodeTBTC, coinpkg.CodeRBTC:
+				if scriptType == signing.ScriptTypeP2WSH {
+					return keystore.device.Version().AtLeast(semver.NewSemVer(9, 15, 0))
+				}
 				return keystore.device.Version().AtLeast(semver.NewSemVer(9, 10, 0))
 			default:
 				return false
@@ -133,16 +234,44 @@ func (keystore *keystore) VerifyAddressBTC(
 		panic("CanVerifyAddress must be true")
 	}
 	msgScriptType, ok := btcMsgScriptTypeMap[accountConfiguration.ScriptType()]
-	if !ok {
-		panic("unsupported scripttype")
-	}
 	keypath := accountConfiguration.AbsoluteKeypath().
 		Child(derivation.SimpleChainIndex(), false).
 		Child(derivation.AddressIndex, false)
+	var scriptConfig *messages.BTCScriptConfig
+	if accountConfiguration.BitcoinDescriptor != nil {
+		if err := keystore.ensureBTCScriptConfigRegistered(coin, accountConfiguration, ""); err != nil {
+			return err
+		}
+		scriptConfigWithKeypath, err := keystore.btcMultisigScriptConfig(accountConfiguration)
+		if err != nil {
+			return err
+		}
+		rootFingerprint, err := keystore.RootFingerprint()
+		if err != nil {
+			return err
+		}
+		walletPolicy, err := accountConfiguration.BitcoinDescriptor.ToWalletPolicy()
+		if err != nil {
+			return err
+		}
+		ourKey, err := walletPolicy.FindKey(rootFingerprint)
+		if err != nil {
+			return err
+		}
+		keypath = ourKey.AbsoluteKeypath.
+			Child(derivation.SimpleChainIndex(), false).
+			Child(derivation.AddressIndex, false)
+		scriptConfig = scriptConfigWithKeypath.ScriptConfig
+	} else {
+		if !ok {
+			panic("unsupported scripttype")
+		}
+		scriptConfig = firmware.NewBTCScriptConfigSimple(msgScriptType)
+	}
 	_, err = keystore.device.BTCAddress(
 		btcMsgCoinMap[coin.Code()],
 		keypath.ToUInt32(),
-		firmware.NewBTCScriptConfigSimple(msgScriptType),
+		scriptConfig,
 		true,
 	)
 	if firmware.IsErrorAbort(err) {
@@ -359,6 +488,35 @@ func (keystore *keystore) signBTCTransaction(btcProposedTx *btc.ProposedTransact
 				PaymentRequestIndex:  paymentRequestIndex,
 			},
 		},
+	}
+	if len(btcProposedTx.AccountSigningConfigurations) == 1 &&
+		btcProposedTx.AccountSigningConfigurations[0].BitcoinDescriptor != nil {
+		accountConfiguration := btcProposedTx.AccountSigningConfigurations[0]
+		rootFingerprint, err := keystore.RootFingerprint()
+		if err != nil {
+			return err
+		}
+		isParticipant := false
+		for _, keyInfo := range accountConfiguration.KeyInfos() {
+			if bytes.Equal(keyInfo.RootFingerprint, rootFingerprint) {
+				isParticipant = true
+				break
+			}
+		}
+		if !isParticipant {
+			return errp.New("connected keystore is not a participant of this vault")
+		}
+		if err := keystore.ensureBTCScriptConfigRegistered(
+			coin,
+			accountConfiguration,
+			btcProposedTx.AccountName,
+		); err != nil {
+			return err
+		}
+		signOptions.ForceScriptConfig, err = keystore.btcMultisigScriptConfig(accountConfiguration)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Include previous transactions in PSBT if the BitBox requires it.

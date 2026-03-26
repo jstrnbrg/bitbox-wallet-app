@@ -17,4 +17,7 @@ const (
 
 	// ScriptTypeP2TR is a BIP-86 segwit v1 PayToTaproot output.
 	ScriptTypeP2TR ScriptType = "p2tr"
+
+	// ScriptTypeP2WSH is a segwit v0 PayToWitnessScriptHash output.
+	ScriptTypeP2WSH ScriptType = "p2wsh"
 )

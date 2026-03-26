@@ -9,14 +9,16 @@ import { TDevices } from '@/api/devices';
 import { getMarketVendors, MarketVendors } from '@/api/market';
 import { Balance } from '@/components/balance/balance';
 import { HeadersSync } from '@/components/headerssync/headerssync';
-import { InfoBlue, LoupeBlue } from '@/components/icon';
-import { GuidedContent, GuideWrapper, Header, Main } from '@/components/layout';
+import { InfoBlue, LoupeBlue, PointToBitBox02 } from '@/components/icon';
+import { Column, GuidedContent, Grid, GuideWrapper, Header, Main } from '@/components/layout';
 import { Spinner } from '@/components/spinner/Spinner';
 import { Message } from '@/components/message/message';
 import { useLoad, useSubscribe, useSync } from '@/hooks/api';
 import { useBitsurance } from '@/hooks/bitsurance';
 import { useDebounce } from '@/hooks/debounce';
 import { HideAmountsButton } from '@/components/hideamountsbutton/hideamountsbutton';
+import { alertUser } from '@/components/alert/Alert';
+import { AmountWithUnit } from '@/components/amount/amount-with-unit';
 import { ActionButtons } from './actionButtons';
 import { Insured } from './components/insuredtag';
 import { AccountGuide } from './guide';
@@ -28,12 +30,21 @@ import { A } from '@/components/anchor/anchor';
 import { i18n } from '@/i18n/i18n';
 import { ContentWrapper } from '@/components/contentwrapper/contentwrapper';
 import { GlobalBanners } from '@/components/banners';
-import { View, ViewContent, ViewHeader } from '@/components/view/view';
+import { View, ViewButtons, ViewContent, ViewHeader } from '@/components/view/view';
 import { TransactionList } from './components/transaction-list';
 import { TransactionDetails } from '@/components/transactions/details';
 import { Button, Input } from '@/components/forms';
 import { SubTitle } from '@/components/title';
+import { Arrow } from '@/components/transactions/components/arrows';
+import { Loupe } from '@/components/icon/icon';
+import { FiatValue } from '@/components/amount/fiat-value';
+import { UseDisableBackButton } from '@/hooks/backbutton';
 import { TransactionHistorySkeleton } from '@/routes/account/transaction-history-skeleton';
+import confirmStyle from '@/routes/account/send/components/confirm/confirm.module.css';
+import { TxDetailRow } from '@/components/transactions/components/tx-detail-dialog/tx-detail-row';
+import { AddressOrTxId } from '@/components/transactions/components/tx-detail-dialog/address-or-tx-id';
+import txStyle from '@/components/transactions/transaction.module.css';
+import txDetailStyle from '@/components/transactions/components/tx-detail-dialog/tx-detail-dialog.module.css';
 import { RatesContext } from '@/contexts/RatesContext';
 import { OfflineError } from '@/components/banners/offline-error';
 import style from './account.module.css';
@@ -80,7 +91,12 @@ const RemountAccount = ({
   );
   const syncedAddressesCount = useSubscribe(syncAddressesCount(code));
   const [transactions, setTransactions] = useState<accountApi.TTransactions>();
+  const [signingSessions, setSigningSessions] = useState<accountApi.TSigningSession[]>();
   const [detailID, setDetailID] = useState<accountApi.TTransaction['internalID'] | null>(null);
+  const [signingSessionDetail, setSigningSessionDetail] = useState<accountApi.TSigningSession | null>(null);
+  const [confirmAbandonSession, setConfirmAbandonSession] = useState<accountApi.TSigningSession | null>(null);
+  const [confirmingSession, setConfirmingSession] = useState<accountApi.TSigningSession | null>(null);
+  const [broadcastSuccess, setBroadcastSuccess] = useState(false);
   const [showSearchBar, setShowSearchBar] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const debouncedSearchTerm = useDebounce(searchTerm, 200);
@@ -89,6 +105,19 @@ const RemountAccount = ({
   const supportedVendors = useLoad<MarketVendors>(getMarketVendors(code), [code]);
 
   const account = accounts && accounts.find(acct => acct.code === code);
+
+  const loadSigningSessions = useCallback(async () => {
+    if (!account || account.accountType !== 'vault') {
+      setSigningSessions(undefined);
+      return;
+    }
+    const result = await accountApi.getSigningSessions(code);
+    if (result.success) {
+      setSigningSessions(result.sessions);
+    } else {
+      setSigningSessions([]);
+    }
+  }, [account, code]);
 
   const { insured, uncoveredFunds, clearUncoveredFunds } = useBitsurance(code, account);
 
@@ -153,6 +182,21 @@ const RemountAccount = ({
   }, [btcUnit, onAccountChanged, status]);
 
   useEffect(() => {
+    loadSigningSessions().catch(console.error);
+  }, [loadSigningSessions]);
+
+  useEffect(() => {
+    if (!confirmingSession) {
+      return;
+    }
+    const session = confirmingSession;
+    const action = session.state === 'readyToBroadcast' ? 'broadcast' : 'sign';
+    handleSigningSessionAction(session, action).finally(() => {
+      setConfirmingSession(null);
+    });
+  }, [confirmingSession]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     if (showSearchBar && searchInputRef.current) {
       searchInputRef.current?.focus();
     }
@@ -179,6 +223,9 @@ const RemountAccount = ({
   ) : '';
 
   const exchangeSupported = supportedVendors && supportedVendors.vendors.length > 0;
+  const pendingSigningSessions = (signingSessions || []).filter(
+    session => session.state !== 'broadcasted' && session.state !== 'abandoned',
+  );
 
   const isAccountEmpty = balance
     && !balance.hasAvailable
@@ -195,6 +242,56 @@ const RemountAccount = ({
     canSend: balance && balance.hasAvailable,
     exchangeSupported,
     account
+  };
+
+  const handleContinueSigningSession = (session: accountApi.TSigningSession) => {
+    // Check if any device is connected
+    const connectedSigners = account?.connectedSigners || [];
+    if (connectedSigners.length === 0) {
+      alertUser(t('account.signingSessions.noDeviceConnected'));
+      return;
+    }
+    // Check if the connected device has already signed
+    const alreadySigned = connectedSigners.some(fp => session.signedBy.includes(fp));
+    if (alreadySigned) {
+      const signerName = account?.participants?.find(
+        p => connectedSigners.includes(p.rootFingerprint)
+      )?.name || '';
+      alertUser(t('account.signingSessions.alreadySigned', { name: signerName }));
+      return;
+    }
+    setConfirmingSession(session);
+  };
+
+  const handleSigningSessionAction = async (
+    session: accountApi.TSigningSession,
+    action: 'sign' | 'broadcast' | 'abandon',
+  ) => {
+    let response;
+    switch (action) {
+    case 'sign':
+      response = await accountApi.signSigningSession(code, session.id);
+      break;
+    case 'broadcast':
+      response = await accountApi.broadcastSigningSession(code, session.id);
+      break;
+    case 'abandon':
+      response = await accountApi.abandonSigningSession(code, session.id);
+      break;
+    }
+    if (!response.success) {
+      if (!response.aborted) {
+        alertUser(response.errorMessage);
+      }
+      return;
+    }
+    if (response.session?.state === 'broadcasted') {
+      setBroadcastSuccess(true);
+    }
+    await Promise.all([
+      loadSigningSessions(),
+      onAccountChanged(status),
+    ]);
   };
 
   return (
@@ -311,6 +408,57 @@ const RemountAccount = ({
                 )}
               </div>
 
+              {account.accountType === 'vault' && pendingSigningSessions.map(session => (
+                <section className={txStyle.tx} key={session.id}>
+                  <div className={txStyle.txContent} data-tx-type="send">
+                    <span className={txStyle.txIcon}>
+                      <Arrow type="send" />
+                    </span>
+                    <span className={txStyle.txInfoColumn}>
+                      <span className={txStyle.txNote}>
+                        <span className={txStyle.txNoteWithAddress}>
+                          <span className={txStyle.txType}>
+                            {t('account.signingSessions.sending')}
+                          </span>
+                          {' '}
+                          <span className={txStyle.addresses}>
+                            {session.recipientAddr}
+                          </span>
+                        </span>
+                      </span>
+                      <span className={style.signingSessionMeta}>
+                        {t('account.signingSessions.progress', {
+                          count: session.signedBy.length,
+                          total: session.totalRequired,
+                        })}
+                        {' '}
+                        <a
+                          href="#"
+                          className={style.signingSessionContinue}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleContinueSigningSession(session);
+                          }}>
+                          {t('account.signingSessions.continue')}
+                        </a>
+                      </span>
+                    </span>
+                    <span className={txStyle.txAmountsColumn}>
+                      <span className={txStyle.txAmount}>
+                        <AmountWithUnit amount={session.amount} />
+                      </span>
+                      <FiatValue amount={session.total} />
+                    </span>
+                    <button
+                      className={txStyle.txShowDetailBtn}
+                      onClick={() => setSigningSessionDetail(session)}
+                      type="button">
+                      <Loupe className={txStyle.iconLoupe} />
+                    </button>
+                  </div>
+                </section>
+              ))}
+
               {loadingTransactions && <TransactionHistorySkeleton />}
 
               <TransactionList
@@ -326,8 +474,217 @@ const RemountAccount = ({
                 internalID={detailID}
                 onClose={() => setDetailID(null)}
               />
+
+              {signingSessionDetail && (
+                <Dialog
+                  open={!!signingSessionDetail}
+                  title={confirmAbandonSession
+                    ? t('account.signingSessions.confirmAbandon.title')
+                    : t('transaction.details.title')}
+                  onClose={() => {
+                    setConfirmAbandonSession(null);
+                    setSigningSessionDetail(null);
+                  }}
+                  slim
+                  medium>
+                  {confirmAbandonSession ? (
+                    <div className={txDetailStyle.container}>
+                      <p>{t('account.signingSessions.confirmAbandon.message')}</p>
+                      <div className={style.signingSessionDetailActions}>
+                        <Button onClick={() => setConfirmAbandonSession(null)} secondary>
+                          {t('dialog.cancel')}
+                        </Button>
+                        <Button onClick={() => {
+                          const session = confirmAbandonSession;
+                          setConfirmAbandonSession(null);
+                          setSigningSessionDetail(null);
+                          handleSigningSessionAction(session, 'abandon');
+                        }} danger>
+                          {t('account.signingSessions.confirmAbandon.confirm')}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className={txDetailStyle.container}>
+                      <TxDetailRow>
+                        <p className={txDetailStyle.label}>{t('send.confirm.to')}</p>
+                        <AddressOrTxId values={[signingSessionDetail.recipientAddr]} />
+                      </TxDetailRow>
+                      <TxDetailRow>
+                        <p className={txDetailStyle.label}>{t('generic.send')}</p>
+                        <span><AmountWithUnit amount={signingSessionDetail.amount} /></span>
+                      </TxDetailRow>
+                      <TxDetailRow>
+                        <p className={txDetailStyle.label}>{t('transaction.fee')}</p>
+                        <span><AmountWithUnit amount={signingSessionDetail.fee} /></span>
+                      </TxDetailRow>
+                      <TxDetailRow>
+                        <p className={txDetailStyle.label}>{t('send.confirm.total')}</p>
+                        <span><AmountWithUnit amount={signingSessionDetail.total} /></span>
+                      </TxDetailRow>
+                      <TxDetailRow>
+                        <p className={txDetailStyle.label}>{t('account.signingSessions.signaturesLabel')}</p>
+                        <span>
+                          {t('account.signingSessions.progress', {
+                            count: signingSessionDetail.signedBy.length,
+                            total: signingSessionDetail.totalRequired,
+                          })}
+                          {signingSessionDetail.signedBy.length > 0 && account.participants && (
+                            <span className={style.signingSessionSignedBy}>
+                              {signingSessionDetail.signedBy.map(fp => {
+                                const participant = account.participants?.find(p => p.rootFingerprint === fp);
+                                return participant?.name || fp;
+                              }).join(', ')}
+                            </span>
+                          )}
+                        </span>
+                      </TxDetailRow>
+                      {signingSessionDetail.note && (
+                        <TxDetailRow>
+                          <p className={txDetailStyle.label}>{t('note.title')}</p>
+                          <span>{signingSessionDetail.note}</span>
+                        </TxDetailRow>
+                      )}
+                      <div className={style.signingSessionDetailActions}>
+                        <Button onClick={() => {
+                          setConfirmAbandonSession(signingSessionDetail);
+                        }} secondary>
+                          {t('account.signingSessions.delete')}
+                        </Button>
+                        <Button onClick={() => {
+                          const session = signingSessionDetail;
+                          setSigningSessionDetail(null);
+                          handleContinueSigningSession(session);
+                        }} primary>
+                          {t('account.signingSessions.continue')}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </Dialog>
+              )}
             </ViewContent>
           </View>
+
+          {broadcastSuccess && (
+            <View fullscreen textCenter verticallyCentered width="520px">
+              <ViewHeader />
+              <ViewContent withIcon="success">
+                <p>{t('send.success')}</p>
+              </ViewContent>
+              <ViewButtons>
+                <Button primary onClick={() => {
+                  setBroadcastSuccess(false);
+                }}>
+                  {t('button.done')}
+                </Button>
+              </ViewButtons>
+            </View>
+          )}
+
+          {confirmingSession && (
+            <View fullscreen width="840px">
+              <UseDisableBackButton />
+              <ViewHeader title={<div className={confirmStyle.title}>{t('send.confirm.vaultTitle')}</div>} />
+              <ViewContent>
+                <Message type="info">
+                  {t('send.confirm.vaultInfoMessage', {
+                    next: confirmingSession.signedBy.length + 1,
+                    total: confirmingSession.totalRequired,
+                  })}
+                </Message>
+
+                <Grid col="2">
+
+                  <Column col="2">
+                    <div className={confirmStyle.bitBoxContainer}>
+                      <PointToBitBox02 />
+                    </div>
+                  </Column>
+
+                  {/* Send amount */}
+                  <Column col="2">
+                    <span className={confirmStyle.label}>
+                      {t('generic.send')}
+                    </span>
+                  </Column>
+                  <Column className={confirmStyle.confirmItem}>
+                    <span className={confirmStyle.valueOriginalLarge}>
+                      <AmountWithUnit amount={confirmingSession.amount} />
+                    </span>
+                  </Column>
+                  <Column className={confirmStyle.confirmItem}>
+                    <FiatValue
+                      amount={confirmingSession.amount}
+                      className={confirmStyle.valueOriginalLarge}
+                    />
+                  </Column>
+
+                  {/* To */}
+                  <Column col="2">
+                    <span className={confirmStyle.label}>
+                      {t('send.confirm.to')}
+                    </span>
+                  </Column>
+                  <Column col="2" className={confirmStyle.confirmItem}>
+                    <span>{confirmingSession.recipientAddr}</span>
+                  </Column>
+
+                  {/* Note */}
+                  {confirmingSession.note ? (
+                    <Column col="2" className={confirmStyle.confirmItem}>
+                      <span className={confirmStyle.label}>
+                        {t('note.title')}
+                      </span>
+                      <span>{confirmingSession.note}</span>
+                    </Column>
+                  ) : null}
+
+                  {/* Fee */}
+                  <Column col="2">
+                    <span className={confirmStyle.label}>
+                      {t('send.fee.label')}
+                    </span>
+                  </Column>
+                  <Column className={confirmStyle.confirmItem}>
+                    <AmountWithUnit amount={confirmingSession.fee} />
+                  </Column>
+                  <Column className={confirmStyle.confirmItem}>
+                    <FiatValue amount={confirmingSession.fee} />
+                  </Column>
+
+                  {/* Total */}
+                  <Column col="2">
+                    <span className={confirmStyle.label}>
+                      {t('send.confirm.total')}
+                    </span>
+                  </Column>
+                  <Column className={confirmStyle.valueOriginalLarge}>
+                    <AmountWithUnit amount={confirmingSession.total} />
+                  </Column>
+                  <Column className={confirmStyle.valueOriginalLarge}>
+                    <FiatValue amount={confirmingSession.total} />
+                  </Column>
+
+                  {/* Signatures */}
+                  <Column col="2">
+                    <span className={confirmStyle.label}>
+                      {t('account.signingSessions.signaturesLabel')}
+                    </span>
+                  </Column>
+                  <Column col="2" className={confirmStyle.confirmItem}>
+                    <span>
+                      {t('account.signingSessions.progress', {
+                        count: confirmingSession.signedBy.length,
+                        total: confirmingSession.totalRequired,
+                      })}
+                    </span>
+                  </Column>
+
+                </Grid>
+              </ViewContent>
+            </View>
+          )}
         </Main>
       </GuidedContent>
       <AccountGuide

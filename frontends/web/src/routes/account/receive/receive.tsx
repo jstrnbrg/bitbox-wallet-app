@@ -2,9 +2,10 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useLoad } from '@/hooks/api';
+import { useLoad, useSync } from '@/hooks/api';
 import { UseBackButton } from '@/hooks/backbutton';
 import * as accountApi from '@/api/account';
+import { statusChanged } from '@/api/accountsync';
 import { getScriptName, isEthereumBased } from '@/routes/account/utils';
 import { CopyableInput } from '@/components/copy/Copy';
 import { Dialog, DialogButtons } from '@/components/dialog/dialog';
@@ -16,6 +17,7 @@ import { Header } from '@/components/layout';
 import { QRCode } from '@/components/qrcode/qrcode';
 import { ArrowCirlceLeft, ArrowCirlceLeftActive, ArrowCirlceRight, ArrowCirlceRightActive } from '@/components/icon';
 import { connectKeystore } from '@/api/keystores';
+import { Spinner } from '@/components/spinner/Spinner';
 import style from './receive.module.css';
 
 type TProps = {
@@ -83,7 +85,7 @@ const AddressTypeDialog = ({
 
 // For BTC/LTC: all possible address types we want to offer to the user, ordered by priority (first one is default).
 // Types that are not available in the addresses delivered by the backend should be ignored.
-const scriptTypes: accountApi.ScriptType[] = ['p2wpkh', 'p2tr', 'p2wpkh-p2sh'];
+const scriptTypes: accountApi.ScriptType[] = ['p2wpkh', 'p2wsh', 'p2tr', 'p2wpkh-p2sh'];
 
 // Find index in list of receive addresses that matches the given script type, or -1 if not found.
 const getIndexOfMatchingScriptType = (
@@ -111,13 +113,26 @@ export const Receive = ({
 
   const account = accounts.find(({ code: accountCode }) => accountCode === code);
   const insured = account?.bitsuranceStatus === 'active';
+  const status = useSync(
+    () => accountApi.getStatus(code),
+    cb => statusChanged(code, cb),
+  );
 
   // first array index: address types. second array index: unused addresses of that address type.
-  const receiveAddresses = useLoad(accountApi.getReceiveAddressList(code));
+  const receiveAddresses = useLoad(
+    status?.synced ? accountApi.getReceiveAddressList(code) : null,
+    [code, status?.synced],
+  );
 
   const availableScriptTypes = useRef<accountApi.ScriptType[]>();
 
   const hasManyScriptTypes = availableScriptTypes.current && availableScriptTypes.current.length > 1;
+
+  useEffect(() => {
+    if (status !== undefined && !status.disabled && !status.synced) {
+      accountApi.init(code).catch(console.error);
+    }
+  }, [code, status]);
 
   useEffect(() => {
     if (receiveAddresses) {
@@ -148,9 +163,11 @@ export const Receive = ({
     if (!receiveAddresses || account === undefined) {
       return;
     }
-    const connectResult = await connectKeystore(account.keystore.rootFingerprint);
-    if (!connectResult.success) {
-      return;
+    if (account.accountType !== 'vault') {
+      const connectResult = await connectKeystore(account.keystore.rootFingerprint);
+      if (!connectResult.success) {
+        return;
+      }
     }
 
     const hasSecureOutput = await accountApi.hasSecureOutput(code)();
@@ -202,6 +219,10 @@ export const Receive = ({
     }
   }
 
+  if (status?.fatalError) {
+    return <Spinner text={t('account.fatalError')} />;
+  }
+
   return (
     <div className="contentWithGuide">
       <div className="container">
@@ -209,6 +230,9 @@ export const Receive = ({
           <Header title={<h2>{t('receive.title', { accountName: account?.coinName })}</h2>} />
           <div className="content narrow isVerticallyCentered">
             <div className="box large text-center">
+              {(status === undefined || !status.synced || receiveAddresses === undefined) && (
+                <Spinner />
+              )}
               { currentAddresses && (
                 <div style={{ position: 'relative' }}>
                   <div className={style.qrCodeContainer}>

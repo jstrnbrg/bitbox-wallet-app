@@ -5,6 +5,7 @@ import { Route, Routes, useParams } from 'react-router-dom';
 import { TAccount } from '@/api/account';
 import { TDevices } from '@/api/devices';
 import { AddAccount } from './account/add/add-account';
+import { VaultSetup } from './account/add/vault-setup';
 import { Moonpay } from './market/moonpay';
 import { MarketInfo } from './market/info';
 import { Market } from './market/market';
@@ -262,6 +263,8 @@ export const AppRouter = ({ devices, devicesKey, accounts, activeAccounts }: TAp
           <Route path="wallet-connect/dashboard" element={AccDashboardWC} />
         </Route>
         <Route path="add-account" element={<AddAccount accounts={accounts}/>} />
+        <Route path="add-account/vault" element={<VaultSetup />} />
+        <Route path="add-account/vault/:draftId" element={<VaultSetup />} />
         <Route path="account-summary" element={AccountsSummaryEl} />
         <Route path="market">
           <Route path="info" element={MarketInfoEl} >

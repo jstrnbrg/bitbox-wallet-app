@@ -20,7 +20,8 @@ import (
 
 // ProposedTransaction contains all the info needed to sign a btc transaction.
 type ProposedTransaction struct {
-	TXProposal *maketx.TxProposal
+	TXProposal  *maketx.TxProposal
+	AccountName string
 	// List of signing configurations that might be used in the tx inputs.
 	AccountSigningConfigurations signing.Configurations
 	GetPrevTx                    func(chainhash.Hash) (*wire.MsgTx, error)
@@ -37,11 +38,6 @@ type ProposedTransaction struct {
 //     but is currently left to the keystore to populate if needed.
 func (p *ProposedTransaction) Update() error {
 	txProposal := p.TXProposal
-	rootFingerprint, err := p.AccountSigningConfigurations.RootFingerprint()
-	if err != nil {
-		return err
-	}
-	rootFingerprintUint32 := binary.LittleEndian.Uint32(rootFingerprint)
 	updater, err := psbt.NewUpdater(txProposal.Psbt)
 	if err != nil {
 		return err
@@ -64,26 +60,36 @@ func (p *ProposedTransaction) Update() error {
 				return err
 			}
 		}
-
-		switch scriptType {
-		case signing.ScriptTypeP2WPKHP2SH, signing.ScriptTypeP2WPKH:
-			if err := updater.AddInBip32Derivation(
-				rootFingerprintUint32,
-				inputAddress.AbsoluteKeypath().ToUInt32(),
-				inputAddress.PublicKey.SerializeCompressed(),
-				index); err != nil && err != psbt.ErrDuplicateKey {
-				// If we update the same PSBT multiple times, the key info is already present,
-				// so we can ignore the duplicate key error.
+		if scriptType == signing.ScriptTypeP2WSH {
+			if err := updater.AddInWitnessScript(inputAddress.WitnessScript, index); err != nil {
 				return err
 			}
+		}
+
+		switch scriptType {
+		case signing.ScriptTypeP2PKH, signing.ScriptTypeP2WPKHP2SH, signing.ScriptTypeP2WPKH, signing.ScriptTypeP2WSH:
+			for _, derivedKey := range inputAddress.DerivedKeys {
+				rootFingerprintUint32 := binary.LittleEndian.Uint32(derivedKey.RootFingerprint)
+				if err := updater.AddInBip32Derivation(
+					rootFingerprintUint32,
+					derivedKey.AbsoluteKeypath.ToUInt32(),
+					derivedKey.PublicKey.SerializeCompressed(),
+					index); err != nil && err != psbt.ErrDuplicateKey {
+					// If we update the same PSBT multiple times, the key info is already present,
+					// so we can ignore the duplicate key error.
+					return err
+				}
+			}
 		case signing.ScriptTypeP2TR:
+			derivedKey := inputAddress.DerivedKeys[0]
+			rootFingerprintUint32 := binary.LittleEndian.Uint32(derivedKey.RootFingerprint)
 			internalKey := schnorr.SerializePubKey(inputAddress.PublicKey)
 			txProposal.Psbt.Inputs[index].TaprootInternalKey = internalKey
 			txProposal.Psbt.Inputs[index].TaprootBip32Derivation = []*psbt.TaprootBip32Derivation{
 				{
 					XOnlyPubKey:          internalKey,
 					MasterKeyFingerprint: rootFingerprintUint32,
-					Bip32Path:            inputAddress.AbsoluteKeypath().ToUInt32(),
+					Bip32Path:            derivedKey.AbsoluteKeypath.ToUInt32(),
 				},
 			}
 		default:
@@ -104,24 +110,29 @@ func (p *ProposedTransaction) Update() error {
 		if outputAddress != nil {
 			scriptType := outputAddress.AccountConfiguration.ScriptType()
 			switch scriptType {
-			case signing.ScriptTypeP2WPKHP2SH, signing.ScriptTypeP2WPKH:
-				if err := updater.AddOutBip32Derivation(
-					rootFingerprintUint32,
-					outputAddress.AbsoluteKeypath().ToUInt32(),
-					outputAddress.PublicKey.SerializeCompressed(),
-					index); err != nil && err != psbt.ErrDuplicateKey {
-					// If we update the same PSBT multiple times, the key info is already present,
-					// so we can ignore the duplicate key error.
-					return err
+			case signing.ScriptTypeP2PKH, signing.ScriptTypeP2WPKHP2SH, signing.ScriptTypeP2WPKH, signing.ScriptTypeP2WSH:
+				for _, derivedKey := range outputAddress.DerivedKeys {
+					rootFingerprintUint32 := binary.LittleEndian.Uint32(derivedKey.RootFingerprint)
+					if err := updater.AddOutBip32Derivation(
+						rootFingerprintUint32,
+						derivedKey.AbsoluteKeypath.ToUInt32(),
+						derivedKey.PublicKey.SerializeCompressed(),
+						index); err != nil && err != psbt.ErrDuplicateKey {
+						// If we update the same PSBT multiple times, the key info is already present,
+						// so we can ignore the duplicate key error.
+						return err
+					}
 				}
 			case signing.ScriptTypeP2TR:
+				derivedKey := outputAddress.DerivedKeys[0]
+				rootFingerprintUint32 := binary.LittleEndian.Uint32(derivedKey.RootFingerprint)
 				internalKey := schnorr.SerializePubKey(outputAddress.PublicKey)
 				txProposal.Psbt.Outputs[index].TaprootInternalKey = internalKey
 				txProposal.Psbt.Outputs[index].TaprootBip32Derivation = []*psbt.TaprootBip32Derivation{
 					{
 						XOnlyPubKey:          internalKey,
 						MasterKeyFingerprint: rootFingerprintUint32,
-						Bip32Path:            outputAddress.AbsoluteKeypath().ToUInt32(),
+						Bip32Path:            derivedKey.AbsoluteKeypath.ToUInt32(),
 					},
 				}
 			default:
@@ -166,6 +177,7 @@ func (account *Account) signTransaction(
 
 	proposedTransaction := &ProposedTransaction{
 		TXProposal:                   txProposal,
+		AccountName:                  account.Config().Config.Name,
 		AccountSigningConfigurations: signingConfigs,
 		GetKeystoreAddress:           account.getAddressFromSameKeystore,
 		GetPrevTx:                    getPrevTx,

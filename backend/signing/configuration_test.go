@@ -4,6 +4,7 @@ package signing
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
@@ -60,6 +61,20 @@ func TestEncodeDecode(t *testing.T) {
 	require.Equal(t,
 		cfg.EthereumSimple.KeyInfo.AbsoluteKeypath.Encode(),
 		cfgDecodedEth.EthereumSimple.KeyInfo.AbsoluteKeypath.Encode())
+
+	cfg, err = NewBitcoinDescriptorConfiguration(
+		"wsh(sortedmulti(2," +
+			"[01020304/48'/1'/7'/2']" + xpub.String() + "/<0;1>/*," +
+			"[05060708/48'/1'/7'/2']" + xpub.String() + "/<0;1>/*," +
+			"[090a0b0c/48'/1'/7'/2']" + xpub.String() + "/<0;1>/*))")
+	require.NoError(t, err)
+	jsonBytes, err = json.Marshal(cfg)
+	require.NoError(t, err)
+	var cfgDecodedDescriptor Configuration
+	require.NoError(t, json.Unmarshal(jsonBytes, &cfgDecodedDescriptor))
+	require.Nil(t, cfgDecodedDescriptor.BitcoinSimple)
+	require.NotNil(t, cfgDecodedDescriptor.BitcoinDescriptor)
+	require.Equal(t, cfg.BitcoinDescriptor.Descriptor, cfgDecodedDescriptor.BitcoinDescriptor.Descriptor)
 }
 
 func TestContainsRootFingerprint(t *testing.T) {
@@ -135,6 +150,16 @@ func TestAccountNumber(t *testing.T) {
 	num, err = cfg.AccountNumber()
 	require.Error(t, err)
 	require.Equal(t, uint16(0), num)
+
+	cfg, err = NewBitcoinDescriptorConfiguration(
+		"wsh(sortedmulti(2," +
+			"[01020304/48'/1'/7'/2']" + xpub.String() + "/<0;1>/*," +
+			"[05060708/48'/1'/7'/2']" + xpub.String() + "/<0;1>/*," +
+			"[090a0b0c/48'/1'/7'/2']" + xpub.String() + "/<0;1>/*))")
+	require.NoError(t, err)
+	num, err = cfg.AccountNumber()
+	require.NoError(t, err)
+	require.Equal(t, uint16(7), num)
 }
 
 func TestAccountNumberOnConfigurations(t *testing.T) {
@@ -152,4 +177,65 @@ func TestAccountNumberOnConfigurations(t *testing.T) {
 	num, err := cfgs.AccountNumber()
 	require.NoError(t, err)
 	require.Equal(t, uint16(10), num)
+}
+
+func TestNewKeyInfoFromString(t *testing.T) {
+	validXpub := "xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL"
+
+	t.Run("valid_with_origin", func(t *testing.T) {
+		keyStr := "[d34db33f/44'/0'/0']" + validXpub
+		keyInfo, err := NewKeyInfoFromString(keyStr)
+		require.NoError(t, err)
+		require.Equal(t, []byte{0xd3, 0x4d, 0xb3, 0x3f}, keyInfo.RootFingerprint)
+		require.Equal(t, mustKeypath("m/44'/0'/0'"), keyInfo.AbsoluteKeypath)
+		require.Equal(t, validXpub, keyInfo.ExtendedPublicKey.String())
+	})
+
+	t.Run("valid_without_origin", func(t *testing.T) {
+		keyInfo, err := NewKeyInfoFromString(validXpub)
+		require.NoError(t, err)
+		require.Nil(t, keyInfo.RootFingerprint)
+		require.Nil(t, keyInfo.AbsoluteKeypath)
+		require.Equal(t, validXpub, keyInfo.ExtendedPublicKey.String())
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		_, err := NewKeyInfoFromString("[zzzzzzzz/44'/0']invalid")
+		require.Error(t, err)
+	})
+}
+
+func TestBitcoinDescriptorToWalletPolicy(t *testing.T) {
+	descriptor := &BitcoinDescriptor{
+		Descriptor: "wsh(sortedmulti(2," +
+			"[d34db33f/48'/1'/0'/2']xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/<0;1>/*," +
+			"[aabbccdd/48'/1'/0'/2']xpub69H7F5d8KSRgmmdJg2KhpAK8SR3DjMwAdkxj3ZuxV27CprR9LgpeyGmXUbC6wb7ERfvrnKZjXoUmmDznezpbZb7ap6r1D3tgFxHmwMkQTPH/<0;1>/*," +
+			"[01020304/48'/1'/0'/2']xpub6CmTSyYCHhv4XiddikeqRHtf1qFs34GTtgnYQ7KL7p6twKTduCjwGbgkZHY1bz2rnnib7sv2eFBDdLqEWzdmKr9MLPmndjx8vtx52x5ba5q/<0;1>/*))",
+	}
+
+	walletPolicy, err := descriptor.ToWalletPolicy()
+	require.NoError(t, err)
+	require.Equal(t, "wsh(sortedmulti(2,@0/**,@1/**,@2/**))", walletPolicy.Policy)
+	require.Len(t, walletPolicy.Keys, 3)
+	require.Equal(t, mustKeypath("m/48'/1'/0'/2'"), walletPolicy.Keys[0].AbsoluteKeypath)
+	require.Equal(t, "xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL", walletPolicy.Keys[0].ExtendedPublicKey.String())
+}
+
+func TestDescriptorRootFingerprints(t *testing.T) {
+	xpub, err := hdkeychain.NewMaster(make([]byte, 32), &chaincfg.TestNet3Params)
+	require.NoError(t, err)
+	xpub, err = xpub.Neuter()
+	require.NoError(t, err)
+	cfg, err := NewBitcoinDescriptorConfiguration(
+		strings.Join([]string{
+			"wsh(sortedmulti(2",
+			"[01020304/48'/1'/1'/2']" + xpub.String() + "/<0;1>/*",
+			"[05060708/48'/1'/1'/2']" + xpub.String() + "/<0;1>/*",
+			"[090a0b0c/48'/1'/1'/2']" + xpub.String() + "/<0;1>/*))",
+		}, ","))
+	require.NoError(t, err)
+	rootFingerprints, err := cfg.RootFingerprints()
+	require.NoError(t, err)
+	require.Len(t, rootFingerprints, 3)
+	require.Equal(t, []byte{1, 2, 3, 4}, rootFingerprints[0])
 }

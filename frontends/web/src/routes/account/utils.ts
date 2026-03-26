@@ -76,9 +76,19 @@ export const getScriptName = (scriptType: ScriptType): string => {
     return 'Wrapped Segwit (P2WPKH-P2SH)';
   case 'p2wpkh':
     return 'Native segwit (bech32, P2WPKH)';
+  case 'p2wsh':
+    return 'Vault (P2WSH multisig)';
   case 'p2tr':
     return 'Taproot (bech32m, P2TR)';
   }
+};
+
+export const getStandardAccounts = (accounts: TAccount[]): TAccount[] => {
+  return accounts.filter(account => account.accountType !== 'vault');
+};
+
+export const getVaultAccounts = (accounts: TAccount[]): TAccount[] => {
+  return accounts.filter(account => account.accountType === 'vault');
 };
 
 export const customFeeUnit = (coinCode: CoinCode): string => {

@@ -43,6 +43,7 @@ type TConfirmSendProps = {
   note: string;
   hasSelectedUTXOs: boolean;
   isConfirming: boolean;
+  isVault: boolean;
   selectedUTXOs: TSelectedUTXOs;
   coinCode: CoinCode;
   transactionDetails: TransactionDetails;
@@ -52,6 +53,7 @@ export const ConfirmSend = ({
   note,
   hasSelectedUTXOs,
   isConfirming,
+  isVault,
   selectedUTXOs,
   coinCode,
   transactionDetails,
@@ -77,10 +79,10 @@ export const ConfirmSend = ({
   return (
     <View fullscreen width="840px">
       <UseDisableBackButton />
-      <ViewHeader title={<div className={style.title}>{t('send.confirm.title')}</div>} />
+      <ViewHeader title={<div className={style.title}>{isVault ? t('send.confirm.vaultTitle') : t('send.confirm.title')}</div>} />
       <ViewContent>
         <Message type="info">
-          {t('send.confirm.infoMessage')}
+          {isVault ? t('send.confirm.vaultInfoMessage', { next: 1, total: 2 }) : t('send.confirm.infoMessage')}
         </Message>
 
         <Grid col="2">

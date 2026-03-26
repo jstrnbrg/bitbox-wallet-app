@@ -37,9 +37,11 @@ type AccountConfig struct {
 	Config   *config.Account
 	DBFolder string
 	// NotesFolder is the folder where the transaction notes are stored. Full path.
-	NotesFolder     string
-	ConnectKeystore func() (keystore.Keystore, error)
-	RateUpdater     *rates.RateUpdater
+	NotesFolder                      string
+	ConnectKeystore                  func() (keystore.Keystore, error)
+	ConnectKeystoreByRootFingerprint func(rootFingerprint []byte) (keystore.Keystore, error)
+	CurrentKeystore                  func() keystore.Keystore
+	RateUpdater                      *rates.RateUpdater
 	// Returns the currency selected by the user in app settings.
 	GetMainCurrency func() string
 	GetNotifier     func(signing.Configurations) Notifier

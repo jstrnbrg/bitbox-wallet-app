@@ -55,7 +55,9 @@ export const useBitsurance = (
     const uncoveredScripts: accountApi.ScriptType[] = [];
     const utxos = await accountApi.getUTXOs(code);
     utxos.forEach((utxo) => {
-      if (utxo.scriptType !== 'p2wpkh' && !uncoveredScripts.includes(utxo.scriptType)) {
+      if (utxo.scriptType !== undefined &&
+        utxo.scriptType !== 'p2wpkh' &&
+        !uncoveredScripts.includes(utxo.scriptType)) {
         uncoveredScripts.push(utxo.scriptType);
       }
     });

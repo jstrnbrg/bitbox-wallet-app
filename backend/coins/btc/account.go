@@ -17,6 +17,7 @@ import (
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/bitsurance"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/addresses"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/blockchain"
+	keystorePkg "github.com/BitBoxSwiss/bitbox-wallet-app/backend/keystore"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/db/transactionsdb"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/maketx"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/transactions"
@@ -153,7 +154,8 @@ func (account *Account) defaultGapLimits(signingConfiguration *signing.Configura
 		Change:  6,
 	}
 
-	if signingConfiguration.ScriptType() == signing.ScriptTypeP2PKH {
+	if signingConfiguration.BitcoinSimple != nil &&
+		signingConfiguration.ScriptType() == signing.ScriptTypeP2PKH {
 		// Usually 6, but BWS uses 20, so for legacy accounts, we have to do that too.
 		// We increase it a bit more as some users still had change buried a bit deeper.
 		limits.Change = 25
@@ -370,6 +372,10 @@ func (account *Account) Info() *accounts.Info {
 	isInsuredAccount := account.Config().Config.InsuranceStatus == string(bitsurance.ActiveStatus)
 	var signingConfigurations []*signing.Configuration
 	for _, subacc := range account.subaccounts {
+		if subacc.signingConfiguration.BitcoinDescriptor != nil {
+			signingConfigurations = append(signingConfigurations, subacc.signingConfiguration)
+			continue
+		}
 		isNativeSegwit := subacc.signingConfiguration.ScriptType() == signing.ScriptTypeP2WPKH
 		// hiding legacy/taproot xpubs as an insured account should only receive on native segwit.
 		if isInsuredAccount && !isNativeSegwit {
@@ -720,14 +726,19 @@ func (account *Account) GetUnusedReceiveAddresses() ([]accounts.AddressList, err
 	account.log.Debug("Get unused receive address")
 	var addresses []accounts.AddressList
 	for _, subacc := range account.subaccounts {
-		scriptType := subacc.signingConfiguration.ScriptType()
-		if account.Config().Config.InsuranceStatus == string(bitsurance.ActiveStatus) && scriptType != signing.ScriptTypeP2WPKH {
-			// Insured accounts can only receive on native segwit
-			continue
+		var scriptType *signing.ScriptType
+		if subacc.signingConfiguration.BitcoinSimple != nil {
+			subaccountScriptType := subacc.signingConfiguration.ScriptType()
+			scriptType = &subaccountScriptType
+			if account.Config().Config.InsuranceStatus == string(bitsurance.ActiveStatus) &&
+				*scriptType != signing.ScriptTypeP2WPKH {
+				// Insured accounts can only receive on native segwit
+				continue
+			}
 		}
 
 		var addressList accounts.AddressList
-		addressList.ScriptType = &scriptType
+		addressList.ScriptType = scriptType
 		unusedAddresses, err := subacc.receiveAddresses.GetUnused()
 		if err != nil {
 			return nil, err
@@ -755,7 +766,7 @@ func (account *Account) VerifyAddress(addressID string) (bool, error) {
 		return false, accounts.ErrSyncInProgress
 	}
 
-	keystore, err := account.Config().ConnectKeystore()
+	keystore, err := account.connectKeystore()
 	if err != nil {
 		return false, err
 	}
@@ -786,11 +797,32 @@ func (account *Account) VerifyAddress(addressID string) (bool, error) {
 
 // CanVerifyAddresses wraps Keystores().CanVerifyAddresses(), see that function for documentation.
 func (account *Account) CanVerifyAddresses() (bool, bool, error) {
-	keystore, err := account.Config().ConnectKeystore()
+	keystore, err := account.connectKeystore()
 	if err != nil {
 		return false, false, err
 	}
 	return keystore.CanVerifyAddress(account.Coin())
+}
+
+// connectKeystore returns the keystore for this account. For vault accounts, it uses a
+// non-blocking check of the currently connected keystore instead of the blocking ConnectKeystore
+// flow, since vault accounts don't go through the frontend connect-keystore prompt.
+func (account *Account) connectKeystore() (keystorePkg.Keystore, error) {
+	if account.Config().Config.IsVault() {
+		currentKeystore := account.Config().CurrentKeystore()
+		if currentKeystore == nil {
+			return nil, errp.New("no keystore is currently connected")
+		}
+		rootFingerprint, err := currentKeystore.RootFingerprint()
+		if err != nil {
+			return nil, err
+		}
+		if !account.Config().Config.SigningConfigurations.ContainsRootFingerprint(rootFingerprint) {
+			return nil, errp.New("the connected keystore is not a participant in this vault")
+		}
+		return currentKeystore, nil
+	}
+	return account.Config().ConnectKeystore()
 }
 
 // addressOutputsSum holds the address and sum of outputs for that address.
@@ -884,12 +916,15 @@ func (account *Account) VerifyExtendedPublicKey(signingConfigIndex int) (bool, e
 		return false, errp.New("account not initialized")
 	}
 
-	keystore, err := account.Config().ConnectKeystore()
+	keystore, err := account.connectKeystore()
 	if err != nil {
 		return false, err
 	}
 
 	if keystore.CanVerifyExtendedPublicKey() {
+		if account.subaccounts[signingConfigIndex].signingConfiguration.BitcoinDescriptor != nil {
+			return false, errp.New("descriptor accounts do not expose a single extended public key")
+		}
 		return true, keystore.VerifyExtendedPublicKey(
 			account.Coin(),
 			account.subaccounts[signingConfigIndex].signingConfiguration,
@@ -923,6 +958,11 @@ func (account *Account) IsChange(scriptHashHex blockchain.ScriptHashHex) bool {
 //	#2: base64 encoding of the message signature, obtained using the private key linked to the address.
 //	#3: is an optional error that could be generated during the execution of the function.
 func SignBTCAddress(account accounts.Interface, message string, scriptType signing.ScriptType) (string, string, error) {
+	if len(account.Config().Config.SigningConfigurations) == 1 &&
+		account.Config().Config.SigningConfigurations[0].BitcoinDescriptor != nil {
+		return "", "", errp.New("sign-message is not supported for vault accounts")
+	}
+
 	keystore, err := account.Config().ConnectKeystore()
 	if err != nil {
 		return "", "", err

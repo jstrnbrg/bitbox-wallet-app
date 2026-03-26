@@ -82,14 +82,16 @@ export const UTXOs = ({
     onChange(proposedUTXOs);
   };
 
-  const renderUTXOs = (scriptType: ScriptType) => {
+  const renderUTXOs = (scriptType: ScriptType | undefined) => {
     const filteredUTXOs = utxos.filter(utxo => utxo.scriptType === scriptType);
     if (filteredUTXOs.length === 0) {
       return null;
     }
     return (
       <div className={style.utxoContainer} key={'utxos-' + scriptType}>
-        <h2 className="subTitle">{ getScriptName(scriptType) }</h2>
+        {scriptType !== undefined ? (
+          <h2 className="subTitle">{ getScriptName(scriptType) }</h2>
+        ) : null}
         <ul className={style.utxosList}>
           { filteredUTXOs.map(utxo => (
             <li key={'utxo-' + utxo.outPoint} className={style.utxo}>
@@ -195,6 +197,7 @@ export const UTXOs = ({
       </div>
       <div>
         { allScriptTypes.map(renderUTXOs) }
+        { renderUTXOs(undefined) }
         <div className="buttons text-center m-top-none m-bottom-half">
           <Button primary onClick={onClose}>
             {t('button.continue')}

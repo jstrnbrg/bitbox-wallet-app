@@ -49,6 +49,15 @@ export type TKeystore = {
   connected: boolean;
 };
 
+export type AccountType = 'standard' | 'vault';
+
+export type TAccountParticipant = {
+  name?: string;
+  rootFingerprint: string;
+  keypath: string;
+  xpub: string;
+};
+
 export type TAccount = {
   keystore: TKeystore;
   active: boolean;
@@ -64,6 +73,10 @@ export type TAccount = {
   blockExplorerAddressPrefix?: string;
   bitsuranceStatus?: TDetailStatus;
   accountNumber?: number;
+  accountType?: AccountType;
+  policyId?: string;
+  participants?: TAccountParticipant[];
+  connectedSigners?: string[];
 };
 
 export const getAccounts = (): Promise<TAccount[]> => {
@@ -126,9 +139,9 @@ export const getStatus = (code: AccountCode): Promise<TStatus> => {
   return apiGet(`account/${code}/status`);
 };
 
-export type ScriptType = 'p2pkh' | 'p2wpkh-p2sh' | 'p2wpkh' | 'p2tr';
+export type ScriptType = 'p2pkh' | 'p2wpkh-p2sh' | 'p2wpkh' | 'p2wsh' | 'p2tr';
 
-export const allScriptTypes: ScriptType[] = ['p2pkh', 'p2wpkh-p2sh', 'p2wpkh', 'p2tr'];
+export const allScriptTypes: ScriptType[] = ['p2pkh', 'p2wpkh-p2sh', 'p2wpkh', 'p2wsh', 'p2tr'];
 
 type TKeyInfo = {
   keypath: string;
@@ -141,15 +154,25 @@ export type TBitcoinSimple = {
   scriptType: ScriptType;
 };
 
+export type TBitcoinDescriptor = {
+  descriptor: string;
+};
+
 export type TEthereumSimple = {
   keyInfo: TKeyInfo;
 };
 
 export type TSigningConfiguration = {
   bitcoinSimple: TBitcoinSimple;
+  bitcoinDescriptor?: never;
+  ethereumSimple?: never;
+} | {
+  bitcoinDescriptor: TBitcoinDescriptor;
+  bitcoinSimple?: never;
   ethereumSimple?: never;
 } | {
   bitcoinSimple?: never;
+  bitcoinDescriptor?: never;
   ethereumSimple: TEthereumSimple;
 };
 
@@ -383,7 +406,7 @@ export type TUTXO = {
   address: string;
   amount: TAmountWithConversions;
   note: string;
-  scriptType: ScriptType;
+  scriptType?: ScriptType;
   addressReused: boolean;
   isChange: boolean;
   headerTimestamp: string | null;
@@ -426,6 +449,186 @@ export const addAccount = (coinCode: string, name: string): Promise<TAddAccount>
     coinCode,
     name,
   });
+};
+
+export type TVaultDraftState =
+  | 'collectingSigners'
+  | 'readyForBackup'
+  | 'readyToComplete'
+  | 'completed'
+  | 'discarded';
+
+export type TVaultDraft = {
+  id: string;
+  network: NativeCoinCode;
+  name: string;
+  accountNumber: number;
+  accountKeypath: string;
+  participants: Array<{
+    name?: string;
+    keyInfo: TKeyInfo;
+  }>;
+  state: TVaultDraftState;
+  createdAt: string;
+  updatedAt: string;
+  recoveryAcknowledged: boolean;
+  policyId?: string;
+};
+
+export type TVaultRecoveryFile = {
+  format: string;
+  network: NativeCoinCode;
+  policy: string;
+  descriptor: string;
+  threshold: number;
+  scriptType: 'p2wsh';
+  policyId: string;
+  accountNumber: number;
+  accountKeypath: string;
+  participants: Array<{
+    name?: string;
+    keyInfo: TKeyInfo;
+  }>;
+  descriptors: {
+    receive: string;
+    change: string;
+  };
+  createdAt: string;
+};
+
+type TVaultDraftResponse = {
+  success: true;
+  draft: TVaultDraft;
+} | {
+  success: false;
+  errorMessage: string;
+  errorCode?: string;
+};
+
+type TVaultDraftListResponse = {
+  success: true;
+  drafts: TVaultDraft[];
+} | {
+  success: false;
+  errorMessage: string;
+};
+
+type TVaultRecoveryResponse = {
+  success: true;
+  recoveryFile: TVaultRecoveryFile;
+} | {
+  success: false;
+  errorMessage: string;
+};
+
+export const startVaultSetup = (coinCode: NativeCoinCode, name?: string): Promise<TVaultDraftResponse> => {
+  return apiPost('vault-setup/start', { coinCode, name });
+};
+
+export const getVaultSetupDrafts = (): Promise<TVaultDraftListResponse> => {
+  return apiGet('vault-setup/drafts');
+};
+
+export const getVaultSetupDraft = (id: string): Promise<TVaultDraftResponse> => {
+  return apiGet(`vault-setup/${id}`);
+};
+
+export const enrollVaultSetupSigner = (id: string): Promise<TVaultDraftResponse> => {
+  return apiPost(`vault-setup/${id}/enroll-signer`);
+};
+
+export const getVaultSetupRecoveryFile = (id: string): Promise<TVaultRecoveryResponse> => {
+  return apiGet(`vault-setup/${id}/recovery-file`);
+};
+
+export const completeVaultSetup = (
+  id: string,
+  name: string,
+  recoveryAcknowledged: boolean,
+): Promise<TAddAccount> => {
+  return apiPost(`vault-setup/${id}/complete`, { name, recoveryAcknowledged });
+};
+
+export const discardVaultSetup = (id: string): Promise<{ success: boolean; errorMessage?: string }> => {
+  return apiPost(`vault-setup/${id}/discard`);
+};
+
+export const importVault = (
+  recoveryFile: TVaultRecoveryFile,
+  name: string,
+): Promise<TAddAccount> => {
+  return apiPost('vault-import', { recoveryFile, name });
+};
+
+export const exportVaultRecoveryFile = (code: AccountCode): Promise<TVaultRecoveryFile> => {
+  return apiGet(`account/${code}/recovery-file`);
+};
+
+export type TSigningSessionState =
+  | 'draft'
+  | 'partiallySigned'
+  | 'readyToBroadcast'
+  | 'broadcasted'
+  | 'abandoned';
+
+export type TSigningSession = {
+  id: string;
+  state: TSigningSessionState;
+  createdAt: string;
+  updatedAt: string;
+  recipientAddr: string;
+  amount: TAmountWithConversions;
+  fee: TAmountWithConversions;
+  total: TAmountWithConversions;
+  note: string;
+  signedBy: string[];
+  missingSigners: string[];
+  totalRequired: number;
+  txId?: string;
+};
+
+type TSigningSessionResponse = {
+  success: true;
+  session: TSigningSession;
+} | {
+  success: false;
+  aborted?: boolean;
+  errorMessage: string;
+};
+
+type TSigningSessionListResponse = {
+  success: true;
+  sessions: TSigningSession[];
+} | {
+  success: false;
+  errorMessage: string;
+};
+
+export const createSigningSession = (
+  code: AccountCode,
+  note: string,
+): Promise<TSigningSessionResponse> => {
+  return apiPost(`account/${code}/signing-sessions`, { note });
+};
+
+export const getSigningSessions = (code: AccountCode): Promise<TSigningSessionListResponse> => {
+  return apiGet(`account/${code}/signing-sessions`);
+};
+
+export const getSigningSession = (code: AccountCode, id: string): Promise<TSigningSessionResponse> => {
+  return apiGet(`account/${code}/signing-sessions/${id}`);
+};
+
+export const signSigningSession = (code: AccountCode, id: string): Promise<TSigningSessionResponse> => {
+  return apiPost(`account/${code}/signing-sessions/${id}/sign`);
+};
+
+export const broadcastSigningSession = (code: AccountCode, id: string): Promise<TSigningSessionResponse> => {
+  return apiPost(`account/${code}/signing-sessions/${id}/broadcast`);
+};
+
+export const abandonSigningSession = (code: AccountCode, id: string): Promise<TSigningSessionResponse> => {
+  return apiPost(`account/${code}/signing-sessions/${id}/abandon`);
 };
 
 export type TSignMessage = { success: false; aborted?: boolean; errorMessage?: string } | { success: true; signature: string };

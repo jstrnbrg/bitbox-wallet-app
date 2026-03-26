@@ -31,7 +31,7 @@ export const XPubDetail = ({
   const [viewXPub, setViewXPub] = useState<number>(0);
 
   const account = findAccount(accounts, code);
-  if (!account || !info) {
+  if (!account || !info || account.accountType === 'vault') {
     return null;
   }
 

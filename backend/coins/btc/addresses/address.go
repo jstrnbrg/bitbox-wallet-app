@@ -3,7 +3,10 @@
 package addresses
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"fmt"
+	"slices"
 
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/blockchain"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/types"
@@ -17,6 +20,13 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// DerivedKey contains the derived public key and origin metadata for one address participant.
+type DerivedKey struct {
+	RootFingerprint []byte
+	AbsoluteKeypath signing.AbsoluteKeypath
+	PublicKey       *btcec.PublicKey
+}
+
 // AccountAddress models an address that belongs to an account of the user.
 // It contains all the information needed to receive and spend funds.
 type AccountAddress struct {
@@ -25,12 +35,15 @@ type AccountAddress struct {
 	// AccountConfiguration is the account level configuration from which this address was derived.
 	AccountConfiguration *signing.Configuration
 	// PublicKey is the public key of a single-sig address.
-	PublicKey  *btcec.PublicKey
-	Derivation types.Derivation
+	PublicKey   *btcec.PublicKey
+	DerivedKeys []DerivedKey
+	Derivation  types.Derivation
 
 	// redeemScript stores the redeem script of a BIP16 P2SH output or nil if address type is not
 	// P2SH.
 	RedeemScript []byte
+	// WitnessScript stores the witness script of a P2WSH output or nil otherwise.
+	WitnessScript []byte
 
 	log *logrus.Entry
 }
@@ -52,19 +65,68 @@ func NewAccountAddress(
 
 	var address btcutil.Address
 	var redeemScript []byte
+	var witnessScript []byte
+	var err error
 	relativeKeypath := signing.NewEmptyRelativeKeypath().
 		Child(derivation.SimpleChainIndex(), signing.NonHardened).
 		Child(derivation.AddressIndex, signing.NonHardened)
-	derivedXpub, err := relativeKeypath.Derive(accountConfiguration.ExtendedPublicKey())
-	if err != nil {
-		log.WithError(err).Panic("Failed to derive xpub.")
-	}
-	publicKey, err := derivedXpub.ECPubKey()
-	if err != nil {
-		log.WithError(err).Panic("Failed to convert an extended public key to a normal public key.")
+	var publicKey *btcec.PublicKey
+	var derivedKeys []DerivedKey
+	if accountConfiguration.BitcoinDescriptor != nil {
+		for _, keyInfo := range accountConfiguration.KeyInfos() {
+			derivedXpub, err := relativeKeypath.Derive(keyInfo.ExtendedPublicKey)
+			if err != nil {
+				log.WithError(err).Panic("Failed to derive descriptor xpub.")
+			}
+			derivedPubKey, err := derivedXpub.ECPubKey()
+			if err != nil {
+				log.WithError(err).Panic("Failed to convert a descriptor xpub to a normal public key.")
+			}
+			derivedKeys = append(derivedKeys, DerivedKey{
+				RootFingerprint: keyInfo.RootFingerprint,
+				AbsoluteKeypath: keyInfo.AbsoluteKeypath.Append(relativeKeypath),
+				PublicKey:       derivedPubKey,
+			})
+		}
+		slices.SortFunc(derivedKeys, func(a, b DerivedKey) int {
+			return bytes.Compare(
+				a.PublicKey.SerializeCompressed(),
+				b.PublicKey.SerializeCompressed(),
+			)
+		})
+		builder := txscript.NewScriptBuilder().AddOp(txscript.OP_2)
+		for _, derivedKey := range derivedKeys {
+			builder.AddData(derivedKey.PublicKey.SerializeCompressed())
+		}
+		witnessScript, err = builder.AddOp(txscript.OP_3).AddOp(txscript.OP_CHECKMULTISIG).Script()
+		if err != nil {
+			log.WithError(err).Panic("Failed to build multisig witness script.")
+		}
+		witnessScriptHash := sha256.Sum256(witnessScript)
+		address, err = btcutil.NewAddressWitnessScriptHash(witnessScriptHash[:], net)
+		if err != nil {
+			log.WithError(err).Panic("Failed to get p2wsh addr. from witness script.")
+		}
+	} else {
+		derivedXpub, err := relativeKeypath.Derive(accountConfiguration.ExtendedPublicKey())
+		if err != nil {
+			log.WithError(err).Panic("Failed to derive xpub.")
+		}
+		publicKey, err = derivedXpub.ECPubKey()
+		if err != nil {
+			log.WithError(err).Panic("Failed to convert an extended public key to a normal public key.")
+		}
+		derivedKeys = []DerivedKey{{
+			RootFingerprint: accountConfiguration.KeyInfos()[0].RootFingerprint,
+			AbsoluteKeypath: accountConfiguration.AbsoluteKeypath().Append(relativeKeypath),
+			PublicKey:       publicKey,
+		}}
 	}
 
-	publicKeyHash := btcutil.Hash160(publicKey.SerializeCompressed())
+	publicKeyHash := []byte(nil)
+	if publicKey != nil {
+		publicKeyHash = btcutil.Hash160(publicKey.SerializeCompressed())
+	}
 	switch accountConfiguration.ScriptType() {
 	case signing.ScriptTypeP2PKH:
 		address, err = btcutil.NewAddressPubKeyHash(publicKeyHash, net)
@@ -96,6 +158,8 @@ func NewAccountAddress(
 		if err != nil {
 			log.WithError(err).Panic("Failed to get p2tr addr")
 		}
+	case signing.ScriptTypeP2WSH:
+		// Already created above using the policy-derived witness script.
 	default:
 		log.Panic(fmt.Sprintf("Unrecognized script type: %s", accountConfiguration.ScriptType()))
 	}
@@ -104,8 +168,10 @@ func NewAccountAddress(
 		Address:              address,
 		AccountConfiguration: accountConfiguration,
 		PublicKey:            publicKey,
+		DerivedKeys:          derivedKeys,
 		Derivation:           derivation,
 		RedeemScript:         redeemScript,
+		WitnessScript:        witnessScript,
 		log:                  log,
 	}
 }
@@ -153,6 +219,8 @@ func (address *AccountAddress) ScriptForHashToSign() (bool, []byte) {
 		return true, address.RedeemScript
 	case signing.ScriptTypeP2WPKH:
 		return true, address.PubkeyScript()
+	case signing.ScriptTypeP2WSH:
+		return true, address.WitnessScript
 	default:
 		address.log.Panic("Unrecognized address type.")
 	}

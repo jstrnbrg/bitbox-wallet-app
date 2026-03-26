@@ -1,0 +1,243 @@
+# Bitcoin Vaults (2-of-3) Hybrid Spec
+
+## Summary
+- Add a new Bitcoin `Vault` account kind for `btc`, `tbtc`, and `rbtc`.
+- Use a fixed v1 wallet policy equivalent to `wsh(sortedmulti(2,...))`, but model it internally as a generic Bitcoin policy so future wallet-policy options can reuse the same foundation.
+- Persist vault setup drafts locally so users can enroll one signer, quit the app, and resume later.
+- Persist signing sessions in the account-scoped BTC BoltDB so PSBT signing can continue across restarts and locations.
+- Vaults are always watch-only once completed or imported.
+- Add a Markdown design/spec document to the repo for PR reviewers at `/Users/work/AI/Coding/shift/bitbox-wallet-app/docs/bitcoin-vaults-v1.md`.
+
+## Public APIs / Types
+- Extend BTC account discovery to advertise account kinds/templates:
+  - `standard`
+  - `vault`
+- Keep singlesig `account-add` unchanged.
+- Add persisted vault-setup draft endpoints:
+  - `POST /vault-setup/start`
+  - `GET /vault-setup/drafts`
+  - `GET /vault-setup/{id}`
+  - `POST /vault-setup/{id}/enroll-signer`
+  - `GET /vault-setup/{id}/recovery-file`
+  - `POST /vault-setup/{id}/complete`
+  - `POST /vault-setup/{id}/discard`
+  - `POST /vault-import`
+- Add vault signing-session endpoints:
+  - `POST /account/{code}/signing-sessions`
+  - `GET /account/{code}/signing-sessions`
+  - `GET /account/{code}/signing-sessions/{id}`
+  - `POST /account/{code}/signing-sessions/{id}/sign`
+  - `POST /account/{code}/signing-sessions/{id}/broadcast`
+  - `POST /account/{code}/signing-sessions/{id}/abandon`
+- Add recovery export endpoint:
+  - `GET /account/{code}/recovery-file`
+- Split account API/UI types by account kind:
+  - `standard` keeps the single-`keystore` model
+  - `vault` exposes `policyId`, `participants[]`, `connectedSigners[]`, and never pretends to belong to one keystore
+- Add a vault-setup draft type with:
+  - `id`
+  - `network`
+  - `name`
+  - `participants[]`
+  - `state`
+  - `createdAt`
+  - `updatedAt`
+  - `recoveryAcknowledged`
+
+## Core Model
+- Add a first-class Bitcoin policy config type to `backend/signing`.
+  - fields: `policy`, `scriptType=p2wsh`, `threshold=2`, `accountKeypath`, `participants[]`, `policyId`
+  - v1 policy string is fixed to the vault template equivalent to `wsh(sortedmulti(2,@0,@1,@2))`
+- Each participant stores:
+  - `rootFingerprint`
+  - BIP48 account keypath `m/48'/coin'/account'/2'`
+  - account xpub
+  - optional device display name
+- Canonicalize the vault by sorting participants by a stable descriptor fragment derived from fingerprint + account keypath + xpub.
+  - Enrollment order must not affect `policyId`, stored descriptors, or derived addresses.
+- Compute `policyId` from the canonical policy material, including network, threshold, script type, account keypath, and sorted participants.
+- Vault account codes use:
+  - `v0-vault-{policyId}-{coinCode}-{accountNumber}`
+- Vault account numbers are allocated only among vaults on the same network with the same canonical signer set.
+- Derivation:
+  - mainnet: `m/48'/0'/account'/2'`
+  - testnet/regtest: `m/48'/1'/account'/2'`
+  - receive: `/0/index`
+  - change: `/1/index`
+
+## Setup, Recovery, and Draft Behavior
+- Replace the in-memory setup flow with a persisted local draft store.
+  - store drafts outside account-scoped BTC DBs, since the vault account does not exist yet
+  - use a dedicated local app-scoped BoltDB under the cache/app data directory
+- Drafts are visible in the UI and retained until the user completes or discards them.
+- Setup draft states:
+  - `collectingSigners`
+  - `readyForBackup`
+  - `readyToComplete`
+  - `completed`
+  - `discarded`
+- Setup flow:
+  - choose BTC network
+  - choose `Vault`
+  - create a draft
+  - enroll signer 1, 2, and 3 over any number of sessions
+  - reject duplicate root fingerprints
+  - after signer 3, compute canonical participant order and default name
+  - generate recovery file
+  - block completion until the user explicitly confirms they saved the recovery file
+  - on completion, persist the vault as a watch-only account and remove/close the draft
+- Recovery file is mandatory because 2 seeds alone are not enough to reconstruct a fresh vault without the missing signer xpub/key-origin metadata.
+- Recovery file format is JSON containing:
+  - format/version
+  - network
+  - threshold
+  - script type
+  - canonical participant metadata
+  - wildcard descriptors for:
+    - receive: `.../0/*`
+    - change: `.../1/*`
+- Import flow:
+  - validate format and network
+  - rebuild canonical participant set and `policyId`
+  - create the watch-only vault immediately
+  - signers are connected and registered lazily later
+- Vaults are always watch-only.
+  - They load with no signer connected.
+  - They are excluded from the existing per-keystore watch-only toggle.
+  - No hidden unused vault discovery in v1.
+
+## Device and Signing Flow
+- Reuse the existing “one connected keystore at a time” host model.
+  - Draft enrollment connects one BitBox02 at a time.
+  - Vault sign/verify prompts for one compatible signer at a time from the missing signer set.
+- Firmware gating:
+  - require BitBox02 firmware new enough for policy-wallet PSBT signing with policy-based change handling
+  - enforce one app minimum of `>= 9.15.0`
+  - show upgrade-required messaging during enrollment and signer connection
+- Device adapter uses BitBox02 policy script configs, not the legacy multisig-only config.
+  - registration/signing uses `BTCScriptConfigPolicy`
+  - `ForceScriptConfig` is always supplied when signing vault PSBTs
+- Registration is lazy:
+  - on first address verification, first signing attempt, or other secure device interaction
+  - if the connected device has not registered the vault yet, call `BTCIsScriptConfigRegistered` and then `BTCRegisterScriptConfig`
+- Address derivation:
+  - derive all child pubkeys at branch/index
+  - build the script according to the stored policy and `sortedmulti`
+  - store the witness script alongside each vault address
+  - vaults return one receive-address list, not the singlesig multi-script list
+- PSBT population for vault inputs/outputs must include:
+  - witness UTXOs
+  - witness scripts
+  - BIP32 derivation/key-origin data for all 3 participants on every relevant input/output
+- Signing sessions:
+  - stored in the existing account-scoped BTC BoltDB under dedicated buckets
+  - state machine:
+    - `draft`
+    - `partiallySigned`
+    - `readyToBroadcast`
+    - `broadcasted`
+    - `abandoned`
+  - stored fields:
+    - session id
+    - serialized PSBT
+    - tx summary
+    - note
+    - created/updated timestamps
+    - collected signer fingerprints
+    - missing signer fingerprints
+    - threshold
+    - txid once broadcasted
+- Vault send flow:
+  - create signing session from the validated tx proposal
+  - sign with one signer
+  - persist updated PSBT
+  - if threshold is met, finalize and attempt broadcast automatically
+  - on successful broadcast: `broadcasted`
+  - if finalization succeeded but broadcast failed: `readyToBroadcast` so the user can retry via the explicit broadcast endpoint
+
+## Frontend Changes
+- BTC add-account flow gets an account-kind step:
+  - `Standard`
+  - `Vault`
+- Add a visible Vault setup drafts UI.
+  - drafts appear in the dedicated `Vaults` section with an `Incomplete` badge
+  - actions: `Resume`, `Discard`
+  - draft cards show signer progress like `1 of 3 enrolled`
+- Add a Vault setup wizard that can resume from draft state:
+  - fixed 2-of-3 policy screen
+  - signer enrollment screens
+  - duplicate-device rejection
+  - firmware upgrade blocking
+  - recovery export screen with download/copy/QR
+  - mandatory acknowledgment before completion
+- Add vault recovery/import flow:
+  - upload or paste recovery JSON
+  - validate and create watch-only vault
+- Sidebar and manage-accounts page get a dedicated `Vaults` group.
+  - completed vaults and visible drafts both live there
+  - standard accounts remain grouped by keystore
+- Vault account page adds a `Pending Signing Sessions` section above transaction history.
+- Vault send flow:
+  - reuse current recipient/amount/fee UI
+  - create a signing session instead of calling singlesig `sendtx`
+  - after first signature, return to the account page with the session visible
+  - show progress like `1 of 2 signatures collected`
+- Vault account info page shows:
+  - `2-of-3 Vault (P2WSH)`
+  - participant list with fingerprint/name/xpub
+  - `Export Recovery File`
+- Standard account UI remains unchanged except where account unions require branching.
+
+## Documentation
+- Add `/Users/work/AI/Coding/shift/bitbox-wallet-app/docs/bitcoin-vaults-v1.md` as part of the implementation PR.
+- The doc should be reviewer-facing, concise, and mirror the implementation spec:
+  - problem statement and scope
+  - policy/script choice
+  - setup and recovery flows
+  - account model and identity (`policyId`)
+  - signing-session lifecycle
+  - API surface
+  - open future extensions intentionally deferred
+- Keep the Markdown doc aligned with the implemented behavior, not aspirational extras.
+
+## Test Plan
+- Backend unit tests:
+  - canonical participant sorting produces identical `policyId` regardless of enrollment order
+  - BIP48 path generation/parsing for `btc`, `tbtc`, `rbtc`
+  - descriptor export uses account origin plus `/0/*` and `/1/*` correctly
+  - vault address derivation matches exported descriptors
+  - duplicate signer rejection
+  - unsupported firmware rejection at enroll/sign/verify
+  - setup drafts persist across restart and can resume at any step
+  - lazy registration triggers exactly when required
+  - signing-session state transitions, including restart persistence
+  - wrong-signer and already-signed rejection
+  - import recreates the same `policyId`, account code, and receive/change addresses
+- Integration tests:
+  - start draft, enroll one signer, restart app, enroll remaining signers, complete vault
+  - full flow with software keystores or simulator:
+    - create vault
+    - fund vault
+    - sign once
+    - restart app
+    - sign with second signer
+    - auto-broadcast
+  - broadcast failure leaves the session retryable
+- Frontend tests:
+  - account-kind branching
+  - visible draft rendering and resume/discard actions
+  - mandatory recovery-file gate
+  - vaults render in the dedicated group
+  - vault session actions change correctly by state
+- E2E/regtest:
+  - create `rbtc` draft, enroll one signer, restart, complete setup
+  - fund, sign once, restart, sign again, broadcast
+  - import recovery file into a clean profile and verify the same receive addresses
+
+## Assumptions / Defaults
+- Scope is `btc`, `tbtc`, and `rbtc` only.
+- All 3 signers are BitBox02 devices owned by one user.
+- v1 supports exactly one policy template: 2-of-3 `P2WSH sortedmulti`.
+- Internal modeling is policy-first so later wallet-policy selection can reuse the same persistence, recovery, and device-registration shape.
+- Vault setup drafts are visible and retained indefinitely until completed or manually discarded.
+- No cloud sync, multi-user collaboration, LTC vaults, or hidden vault discovery are included in v1.

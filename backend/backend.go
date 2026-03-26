@@ -38,6 +38,7 @@ import (
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/keystore"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/keystore/software"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/rates"
+	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/vaults"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/versioninfo"
 	utilConfig "github.com/BitBoxSwiss/bitbox-wallet-app/util/config"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/util/errp"
@@ -209,6 +210,8 @@ type Backend struct {
 
 	notifier *Notifier
 
+	vaultDraftStore *vaults.Store
+
 	devices map[string]device.Interface
 
 	usbManager *usb.Manager
@@ -314,6 +317,11 @@ func NewBackend(arguments *arguments.Arguments, environment Environment) (*Backe
 		return nil, err
 	}
 	backend.notifier = notifier
+	vaultDraftStore, err := vaults.NewStore(arguments.CacheDirectoryPath())
+	if err != nil {
+		return nil, err
+	}
+	backend.vaultDraftStore = vaultDraftStore
 	backend.socksProxy = backendProxy
 	backend.httpClient = hclient
 	backend.ethupdater = eth.NewUpdater(accountUpdate, backend.httpClient, backend.etherScanRateLimiter, backend.updateETHAccounts)
@@ -955,6 +963,11 @@ func (backend *Backend) Close() error {
 	}
 	if err := backend.notifier.Close(); err != nil {
 		errors = append(errors, err.Error())
+	}
+	if backend.vaultDraftStore != nil {
+		if err := backend.vaultDraftStore.Close(); err != nil {
+			errors = append(errors, err.Error())
+		}
 	}
 	if len(errors) > 0 {
 		return errp.New(strings.Join(errors, "; "))

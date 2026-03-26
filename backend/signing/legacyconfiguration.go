@@ -88,14 +88,26 @@ func ConvertToLegacyConfigurations(configurations Configurations) LegacyConfigur
 	var result LegacyConfigurations
 	for _, cfg := range configurations {
 		scriptType := ScriptTypeP2PKH // Was used as default for Ethereum
+		threshold := 1
+		var extendedPublicKeys []*hdkeychain.ExtendedKey
+		absoluteKeypath := cfg.AbsoluteKeypath()
 		if cfg.BitcoinSimple != nil {
 			scriptType = cfg.BitcoinSimple.ScriptType
+			extendedPublicKeys = []*hdkeychain.ExtendedKey{cfg.ExtendedPublicKey()}
+		} else if cfg.BitcoinDescriptor != nil {
+			scriptType = cfg.ScriptType()
+			threshold = cfg.Threshold()
+			for _, keyInfo := range cfg.KeyInfos() {
+				extendedPublicKeys = append(extendedPublicKeys, keyInfo.ExtendedPublicKey)
+			}
+		} else {
+			extendedPublicKeys = []*hdkeychain.ExtendedKey{cfg.ExtendedPublicKey()}
 		}
 		result = append(result, &LegacyConfiguration{
 			scriptType:         scriptType,
-			absoluteKeypath:    cfg.AbsoluteKeypath(),
-			extendedPublicKeys: []*hdkeychain.ExtendedKey{cfg.ExtendedPublicKey()},
-			signingThreshold:   1,
+			absoluteKeypath:    absoluteKeypath,
+			extendedPublicKeys: extendedPublicKeys,
+			signingThreshold:   threshold,
 		})
 	}
 	return result

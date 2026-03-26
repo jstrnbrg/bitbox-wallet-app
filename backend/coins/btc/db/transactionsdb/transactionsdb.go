@@ -25,6 +25,7 @@ const (
 	bucketOutputsKey                = "outputs"
 	bucketAddressHistoriesKey       = "addressHistories"
 	bucketConfigKey                 = "config"
+	bucketSigningSessionsKey        = "signingSessions"
 )
 
 // DB is a bbolt key/value database.
@@ -372,4 +373,52 @@ func (tx *Tx) GapLimits() (types.GapLimits, error) {
 		return limits, nil
 	}
 	return types.GapLimits{}, nil
+}
+
+// PutSigningSession implements transactions.DBTxInterface.
+func (tx *Tx) PutSigningSession(id string, session []byte) error {
+	bucket, err := tx.tx.CreateBucketIfNotExists([]byte(bucketSigningSessionsKey))
+	if err != nil {
+		return errp.WithStack(err)
+	}
+	return bucket.Put([]byte(id), session)
+}
+
+// SigningSession implements transactions.DBTxInterface.
+func (tx *Tx) SigningSession(id string) ([]byte, error) {
+	bucket := tx.tx.Bucket([]byte(bucketSigningSessionsKey))
+	if bucket == nil {
+		return nil, nil
+	}
+	value := bucket.Get([]byte(id))
+	if value == nil {
+		return nil, nil
+	}
+	result := make([]byte, len(value))
+	copy(result, value)
+	return result, nil
+}
+
+// SigningSessions implements transactions.DBTxInterface.
+func (tx *Tx) SigningSessions() (map[string][]byte, error) {
+	result := map[string][]byte{}
+	bucket := tx.tx.Bucket([]byte(bucketSigningSessionsKey))
+	if bucket == nil {
+		return result, nil
+	}
+	return result, bucket.ForEach(func(key, value []byte) error {
+		session := make([]byte, len(value))
+		copy(session, value)
+		result[string(key)] = session
+		return nil
+	})
+}
+
+// DeleteSigningSession implements transactions.DBTxInterface.
+func (tx *Tx) DeleteSigningSession(id string) error {
+	bucket, err := tx.tx.CreateBucketIfNotExists([]byte(bucketSigningSessionsKey))
+	if err != nil {
+		return errp.WithStack(err)
+	}
+	return bucket.Delete([]byte(id))
 }

@@ -3,12 +3,14 @@
 package software
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc"
+	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/addresses"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/types"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/coin"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/eth"
@@ -115,6 +117,7 @@ func (keystore *Keystore) SupportsAccount(coin coin.Coin, meta interface{}) bool
 		return scriptType == signing.ScriptTypeP2PKH ||
 			scriptType == signing.ScriptTypeP2WPKHP2SH ||
 			scriptType == signing.ScriptTypeP2WPKH ||
+			scriptType == signing.ScriptTypeP2WSH ||
 			scriptType == signing.ScriptTypeP2TR
 	case *eth.Coin:
 		return true
@@ -208,7 +211,28 @@ func (keystore *Keystore) signBTCTransaction(btcProposedTx *btc.ProposedTransact
 			return err
 		}
 
-		xprv, err := address.AbsoluteKeypath().Derive(keystore.master)
+		var derivedKey addresses.DerivedKey
+		if address.AccountConfiguration.BitcoinDescriptor != nil {
+			rootFingerprint, err := keystore.RootFingerprint()
+			if err != nil {
+				return err
+			}
+			found := false
+			for _, candidate := range address.DerivedKeys {
+				if bytes.Equal(candidate.RootFingerprint, rootFingerprint) {
+					derivedKey = candidate
+					found = true
+					break
+				}
+			}
+			if !found {
+				return errp.New("connected keystore is not a participant of this vault")
+			}
+		} else {
+			derivedKey = address.DerivedKeys[0]
+		}
+
+		xprv, err := derivedKey.AbsoluteKeypath.Derive(keystore.master)
 		if err != nil {
 			return err
 		}
@@ -252,11 +276,19 @@ func (keystore *Keystore) signBTCTransaction(btcProposedTx *btc.ProposedTransact
 				keystore.log.Debug("Calculated legacy signature hash")
 			}
 			signature := ecdsa.Sign(prv, signatureHash).Serialize()
-			btcProposedTx.TXProposal.Psbt.Inputs[index].PartialSigs = []*psbt.PartialSig{
-				{
-					PubKey:    prv.PubKey().SerializeCompressed(),
-					Signature: append(signature, byte(txscript.SigHashAll)),
-				},
+			partialSig := &psbt.PartialSig{
+				PubKey:    prv.PubKey().SerializeCompressed(),
+				Signature: append(signature, byte(txscript.SigHashAll)),
+			}
+			input := &btcProposedTx.TXProposal.Psbt.Inputs[index]
+			for _, existing := range input.PartialSigs {
+				if bytes.Equal(existing.PubKey, partialSig.PubKey) {
+					partialSig = nil
+					break
+				}
+			}
+			if partialSig != nil {
+				input.PartialSigs = append(input.PartialSigs, partialSig)
 			}
 		}
 	}

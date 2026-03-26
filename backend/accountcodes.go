@@ -23,6 +23,12 @@ func regularAccountCode(rootFingerprint []byte, coinCode coin.Code, accountNumbe
 	return accountsTypes.Code(fmt.Sprintf("v0-%x-%s-%d", rootFingerprint, coinCode, accountNumber))
 }
 
+// vaultAccountCode returns an account code based on a canonical vault policy, coin code and
+// account number.
+func vaultAccountCode(policyID string, coinCode coin.Code, accountNumber uint16) accountsTypes.Code {
+	return accountsTypes.Code(fmt.Sprintf("v0-vault-%s-%s-%d", policyID, coinCode, accountNumber))
+}
+
 // Erc20AccountCode returns the account code used for an ERC20 token.
 // It is derived from the account code of the parent ETH account and the token code.
 func Erc20AccountCode(ethereumAccountCode accountsTypes.Code, tokenCode string) accountsTypes.Code {

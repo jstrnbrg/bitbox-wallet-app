@@ -2,6 +2,16 @@
     margin-bottom: var(--space-half);
 }
 
+.actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-half);
+}
+
+.importAccountBtn {
+    margin-left: auto;
+}
+
 .accountNameInactive {
     color: var(--color-secondary);
 }
@@ -244,6 +254,10 @@
 
 .watchOnlyAccountHidden p {
     color: var(--color-alt);
+    margin: 0;
+}
+
+.sectionTitle {
     margin: 0;
 }
 

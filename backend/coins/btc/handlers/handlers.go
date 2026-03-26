@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/eth/etherscan"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/keystore"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/signing"
+	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/vaults"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/util/config"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/util/errp"
 	"github.com/BitBoxSwiss/bitbox02-api-go/api/firmware"
@@ -58,6 +60,13 @@ func NewHandlers(
 	handleFunc("/receive-addresses", handlers.ensureAccountInitialized(handlers.getReceiveAddresses)).Methods("GET")
 	handleFunc("/verify-address", handlers.ensureAccountInitialized(handlers.postVerifyAddress)).Methods("POST")
 	handleFunc("/verify-extended-public-key", handlers.ensureAccountInitialized(handlers.postVerifyExtendedPublicKey)).Methods("POST")
+	handleFunc("/recovery-file", handlers.ensureAccountInitialized(handlers.getAccountRecoveryFile)).Methods("GET")
+	handleFunc("/signing-sessions", handlers.ensureAccountInitialized(handlers.getSigningSessions)).Methods("GET")
+	handleFunc("/signing-sessions", handlers.ensureAccountInitialized(handlers.postCreateSigningSession)).Methods("POST")
+	handleFunc("/signing-sessions/{id}", handlers.ensureAccountInitialized(handlers.getSigningSession)).Methods("GET")
+	handleFunc("/signing-sessions/{id}/sign", handlers.ensureAccountInitialized(handlers.postSignSigningSession)).Methods("POST")
+	handleFunc("/signing-sessions/{id}/broadcast", handlers.ensureAccountInitialized(handlers.postBroadcastSigningSession)).Methods("POST")
+	handleFunc("/signing-sessions/{id}/abandon", handlers.ensureAccountInitialized(handlers.postAbandonSigningSession)).Methods("POST")
 	handleFunc("/sign-address", handlers.ensureAccountInitialized(handlers.postSignBTCAddress)).Methods("POST")
 	handleFunc("/has-secure-output", handlers.ensureAccountInitialized(handlers.getHasSecureOutput)).Methods("GET")
 	handleFunc("/has-payment-request", handlers.ensureAccountInitialized(handlers.getHasPaymentRequest)).Methods("GET")
@@ -263,6 +272,39 @@ func (handlers *Handlers) getAccountInfo(*http.Request) (interface{}, error) {
 	return handlers.account.Info(), nil
 }
 
+func (handlers *Handlers) getAccountRecoveryFile(*http.Request) (interface{}, error) {
+	accountConfig := handlers.account.Config().Config
+	if !accountConfig.IsVault() || len(accountConfig.SigningConfigurations) == 0 {
+		return nil, errp.New("recovery file only available for vault accounts")
+	}
+	cfg := accountConfig.SigningConfigurations[0]
+	if cfg.BitcoinDescriptor == nil {
+		return nil, errp.New("vault descriptor missing")
+	}
+	accountNumber, err := cfg.AccountNumber()
+	if err != nil {
+		return nil, err
+	}
+	accountKeypath, err := cfg.BitcoinDescriptor.AccountKeypath()
+	if err != nil {
+		return nil, err
+	}
+	participants := make([]signing.BitcoinPolicyParticipant, 0, len(cfg.KeyInfos()))
+	for _, keyInfo := range cfg.KeyInfos() {
+		participants = append(participants, signing.BitcoinPolicyParticipant{KeyInfo: keyInfo})
+	}
+	draft := &vaults.Draft{
+		ID:             string(accountConfig.Code),
+		Network:        accountConfig.CoinCode,
+		Name:           accountConfig.Name,
+		AccountNumber:  accountNumber,
+		AccountKeypath: accountKeypath,
+		Participants:   participants,
+		CreatedAt:      time.Now(),
+	}
+	return vaults.RecoveryFileFromDraft(draft), nil
+}
+
 func (handlers *Handlers) getUTXOs(*http.Request) (interface{}, error) {
 	accountConfig := handlers.account.Config()
 	result := []map[string]interface{}{}
@@ -299,19 +341,21 @@ func (handlers *Handlers) getUTXOs(*http.Request) (interface{}, error) {
 			t := timestamp.Format(time.RFC3339)
 			formattedTime = &t
 		}
-		result = append(result,
-			map[string]interface{}{
-				"outPoint":        output.OutPoint.String(),
-				"txId":            output.OutPoint.Hash.String(),
-				"txOutput":        output.OutPoint.Index,
-				"amount":          coin.ConvertBTCAmount(handlers.account.Coin(), btcutil.Amount(output.TxOut.Value), false, accountConfig.RateUpdater),
-				"address":         address,
-				"scriptType":      output.Address.AccountConfiguration.ScriptType(),
-				"note":            handlers.account.TxNote(output.OutPoint.Hash.String()),
-				"addressReused":   addressReused,
-				"isChange":        output.IsChange,
-				"headerTimestamp": formattedTime,
-			})
+		utxo := map[string]interface{}{
+			"outPoint":        output.OutPoint.String(),
+			"txId":            output.OutPoint.Hash.String(),
+			"txOutput":        output.OutPoint.Index,
+			"amount":          coin.ConvertBTCAmount(handlers.account.Coin(), btcutil.Amount(output.TxOut.Value), false, accountConfig.RateUpdater),
+			"address":         address,
+			"note":            handlers.account.TxNote(output.OutPoint.Hash.String()),
+			"addressReused":   addressReused,
+			"isChange":        output.IsChange,
+			"headerTimestamp": formattedTime,
+		}
+		if output.Address.AccountConfiguration.BitcoinSimple != nil {
+			utxo["scriptType"] = output.Address.AccountConfiguration.ScriptType()
+		}
+		result = append(result, utxo)
 	}
 
 	return result, nil
@@ -446,6 +490,12 @@ func (input *sendTxInput) UnmarshalJSON(jsonBytes []byte) error {
 }
 
 func (handlers *Handlers) postAccountSendTx(r *http.Request) (interface{}, error) {
+	if handlers.account.Config().Config.IsVault() {
+		return map[string]interface{}{
+			"success":      false,
+			"errorMessage": "Vault transactions must be sent through signing sessions",
+		}, nil
+	}
 	var txNote string
 	if err := json.NewDecoder(r.Body).Decode(&txNote); err != nil {
 		// In case unmarshaling of the tx. note fails for some reason we do not want to abort send
@@ -466,6 +516,155 @@ func (handlers *Handlers) postAccountSendTx(r *http.Request) (interface{}, error
 		return result, nil
 	}
 	return map[string]interface{}{"success": true, "txId": txID}, nil
+}
+
+func (handlers *Handlers) signingSessionJSON(session *btc.SigningSession) map[string]interface{} {
+	accountConfig := handlers.account.Config()
+	return map[string]interface{}{
+		"id":             session.ID,
+		"state":          session.State,
+		"createdAt":      session.CreatedAt,
+		"updatedAt":      session.UpdatedAt,
+		"recipientAddr":  session.RecipientAddress,
+		"amount":         coin.ConvertBTCAmount(handlers.account.Coin(), btcutil.Amount(session.Amount), false, accountConfig.RateUpdater),
+		"fee":            coin.ConvertBTCAmount(handlers.account.Coin(), btcutil.Amount(session.Fee), true, accountConfig.RateUpdater),
+		"total":          coin.ConvertBTCAmount(handlers.account.Coin(), btcutil.Amount(session.Total), false, accountConfig.RateUpdater),
+		"note":           session.Note,
+		"signedBy":       session.SignedBy,
+		"missingSigners": session.MissingSigners,
+		"totalRequired":  session.Threshold,
+		"txId":           session.TxID,
+	}
+}
+
+func (handlers *Handlers) btcAccount() (*btc.Account, error) {
+	account, ok := handlers.account.(*btc.Account)
+	if !ok {
+		return nil, errp.New("An account must be BTC based for this operation")
+	}
+	return account, nil
+}
+
+func (handlers *Handlers) getSigningSessions(*http.Request) (interface{}, error) {
+	account, err := handlers.btcAccount()
+	if err != nil {
+		return nil, err
+	}
+	sessions, err := account.ListSigningSessions()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]map[string]interface{}, 0, len(sessions))
+	for _, session := range sessions {
+		result = append(result, handlers.signingSessionJSON(session))
+	}
+	return map[string]interface{}{
+		"success":  true,
+		"sessions": result,
+	}, nil
+}
+
+func (handlers *Handlers) getSigningSession(r *http.Request) (interface{}, error) {
+	account, err := handlers.btcAccount()
+	if err != nil {
+		return nil, err
+	}
+	id := mux.Vars(r)["id"]
+	session, err := account.GetSigningSession(id)
+	if err != nil {
+		return nil, err
+	}
+	if session == nil {
+		return map[string]interface{}{
+			"success":      false,
+			"errorMessage": "signing session not found",
+		}, nil
+	}
+	return map[string]interface{}{
+		"success": true,
+		"session": handlers.signingSessionJSON(session),
+	}, nil
+}
+
+func (handlers *Handlers) postCreateSigningSession(r *http.Request) (interface{}, error) {
+	account, err := handlers.btcAccount()
+	if err != nil {
+		return nil, err
+	}
+	var input struct {
+		Note string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil && err != io.EOF {
+		return nil, errp.WithStack(err)
+	}
+	session, err := account.CreateSigningSession(input.Note)
+	if err != nil {
+		return map[string]interface{}{
+			"success":      false,
+			"errorMessage": err.Error(),
+		}, nil
+	}
+	return map[string]interface{}{
+		"success": true,
+		"session": handlers.signingSessionJSON(session),
+	}, nil
+}
+
+func (handlers *Handlers) postSignSigningSession(r *http.Request) (interface{}, error) {
+	account, err := handlers.btcAccount()
+	if err != nil {
+		return nil, err
+	}
+	session, err := account.SignSigningSession(mux.Vars(r)["id"])
+	if errp.Cause(err) == keystore.ErrSigningAborted || errp.Cause(err) == errp.ErrUserAbort {
+		return map[string]interface{}{"success": false, "aborted": true}, nil
+	}
+	if err != nil {
+		return map[string]interface{}{
+			"success":      false,
+			"errorMessage": err.Error(),
+		}, nil
+	}
+	return map[string]interface{}{
+		"success": true,
+		"session": handlers.signingSessionJSON(session),
+	}, nil
+}
+
+func (handlers *Handlers) postBroadcastSigningSession(r *http.Request) (interface{}, error) {
+	account, err := handlers.btcAccount()
+	if err != nil {
+		return nil, err
+	}
+	session, err := account.BroadcastSigningSession(mux.Vars(r)["id"])
+	if err != nil {
+		return map[string]interface{}{
+			"success":      false,
+			"errorMessage": err.Error(),
+		}, nil
+	}
+	return map[string]interface{}{
+		"success": true,
+		"session": handlers.signingSessionJSON(session),
+	}, nil
+}
+
+func (handlers *Handlers) postAbandonSigningSession(r *http.Request) (interface{}, error) {
+	account, err := handlers.btcAccount()
+	if err != nil {
+		return nil, err
+	}
+	session, err := account.AbandonSigningSession(mux.Vars(r)["id"])
+	if err != nil {
+		return map[string]interface{}{
+			"success":      false,
+			"errorMessage": err.Error(),
+		}, nil
+	}
+	return map[string]interface{}{
+		"success": true,
+		"session": handlers.signingSessionJSON(session),
+	}, nil
 }
 
 func txProposalError(err error) (interface{}, error) {

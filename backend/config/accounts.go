@@ -13,6 +13,16 @@ import (
 	"github.com/BitBoxSwiss/bitbox-wallet-app/util/jsonp"
 )
 
+// AccountType identifies the high-level account kind.
+type AccountType string
+
+const (
+	// AccountTypeStandard is the existing single-owner account model.
+	AccountTypeStandard AccountType = "standard"
+	// AccountTypeVault is a policy-based vault account.
+	AccountTypeVault AccountType = "vault"
+)
+
 // Account holds information related to an account.
 type Account struct {
 	// Used is true if the account has a transaction history.
@@ -43,11 +53,26 @@ type Account struct {
 	CoinCode              coin.Code              `json:"coinCode"`
 	Name                  string                 `json:"name"`
 	Code                  accountsTypes.Code     `json:"code"`
+	AccountType           AccountType            `json:"accountType,omitempty"`
+	PolicyID              string                 `json:"policyId,omitempty"`
 	SigningConfigurations signing.Configurations `json:"configurations"`
 	// ActiveTokens list the tokens that should be loaded along with the account.  Currently, this
 	// only applies to ETH, and the elements are ERC20 token codes (e.g. "eth-erc20-usdt",
 	// "eth-erc20-bat", etc).
 	ActiveTokens []string `json:"activeTokens,omitempty"`
+}
+
+// Type returns the persisted account type, defaulting to standard for older configs.
+func (acct *Account) Type() AccountType {
+	if acct.AccountType == "" {
+		return AccountTypeStandard
+	}
+	return acct.AccountType
+}
+
+// IsVault returns true if this is a vault account.
+func (acct *Account) IsVault() bool {
+	return acct.Type() == AccountTypeVault
 }
 
 // SetTokenActive activates/deactivates an token on an account. `tokenCode` must be an ERC20 token
@@ -121,8 +146,10 @@ func (cfg AccountsConfig) Lookup(code accountsTypes.Code) *Account {
 func (cfg AccountsConfig) LookupByXpub(xpub string) (accountsTypes.Code, error) {
 	for _, acct := range cfg.Accounts {
 		for _, signingConfig := range acct.SigningConfigurations {
-			if xpub == signingConfig.ExtendedPublicKey().String() {
-				return acct.Code, nil
+			for _, keyInfo := range signingConfig.KeyInfos() {
+				if keyInfo.ExtendedPublicKey.String() == xpub {
+					return acct.Code, nil
+				}
 			}
 		}
 	}
@@ -164,6 +191,9 @@ func (cfg *AccountsConfig) GetOrAddKeystore(rootFingerprint []byte) *Keystore {
 
 // IsAccountWatchOnly returns true if the keystore for the account is marked as watchonly.
 func (cfg AccountsConfig) IsAccountWatchOnly(account *Account) (bool, error) {
+	if account.IsVault() {
+		return true, nil
+	}
 	if account.HiddenBecauseUnused {
 		return false, nil
 	}

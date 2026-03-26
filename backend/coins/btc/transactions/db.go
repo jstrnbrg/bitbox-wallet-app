@@ -93,6 +93,18 @@ type DBTxInterface interface {
 	// GapLimits returns the gap limit for receive and change addresses.
 	// If none have been stored before, the default zero value is returned.
 	GapLimits() (types.GapLimits, error)
+
+	// PutSigningSession stores an opaque signing session payload.
+	PutSigningSession(id string, session []byte) error
+
+	// SigningSession retrieves a signing session payload, or nil if not found.
+	SigningSession(id string) ([]byte, error)
+
+	// SigningSessions returns all stored signing sessions keyed by ID.
+	SigningSessions() (map[string][]byte, error)
+
+	// DeleteSigningSession deletes a signing session payload.
+	DeleteSigningSession(id string) error
 }
 
 // DBInterface can be implemented by database backends to open database transactions.

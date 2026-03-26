@@ -242,6 +242,9 @@ func (backend *Backend) AccountsByKeystore() (KeystoresAccountsListMap, error) {
 	accountsByKeystore := KeystoresAccountsListMap{}
 	for _, account := range backend.accounts {
 		persistedAccount := account.Config().Config
+		if persistedAccount.IsVault() {
+			continue
+		}
 		rootFingerprint, err := persistedAccount.SigningConfigurations.RootFingerprint()
 		if err != nil {
 			return nil, err
@@ -649,6 +652,9 @@ func findHiddenAccount(
 		if coinCode != account.CoinCode {
 			continue
 		}
+		if account.IsVault() {
+			continue
+		}
 		if !account.SigningConfigurations.ContainsRootFingerprint(rootFingerprint) {
 			continue
 		}
@@ -677,6 +683,9 @@ func nextAccountNumber(coinCode coinpkg.Code, keystore keystore.Keystore, accoun
 	nextAccountNumber := uint16(0)
 	for _, account := range accountsConfig.Accounts {
 		if coinCode != account.CoinCode {
+			continue
+		}
+		if account.IsVault() {
 			continue
 		}
 		if !account.SigningConfigurations.ContainsRootFingerprint(rootFingerprint) {
@@ -974,11 +983,31 @@ func (backend *Backend) createAndAddAccount(coin coinpkg.Coin, persistedConfig *
 		DBFolder:    backend.arguments.CacheDirectoryPath(),
 		NotesFolder: backend.arguments.NotesDirectoryPath(),
 		ConnectKeystore: func() (keystore.Keystore, error) {
+			if persistedConfig.IsVault() {
+				if backend.keystore != nil {
+					rootFingerprint, err := backend.keystore.RootFingerprint()
+					if err == nil && persistedConfig.SigningConfigurations.ContainsRootFingerprint(rootFingerprint) {
+						return backend.keystore, nil
+					}
+				}
+				if len(persistedConfig.SigningConfigurations) == 0 {
+					return nil, errp.New("vault account is missing signing configurations")
+				}
+				keyInfos := persistedConfig.SigningConfigurations[0].KeyInfos()
+				if len(keyInfos) == 0 {
+					return nil, errp.New("vault account is missing participants")
+				}
+				return backend.ConnectKeystore(keyInfos[0].RootFingerprint)
+			}
 			accountRootFingerprint, err := persistedConfig.SigningConfigurations.RootFingerprint()
 			if err != nil {
 				return nil, err
 			}
 			return backend.ConnectKeystore(accountRootFingerprint)
+		},
+		ConnectKeystoreByRootFingerprint: backend.ConnectKeystore,
+		CurrentKeystore: func() keystore.Keystore {
+			return backend.keystore
 		},
 		RateUpdater: backend.ratesUpdater,
 		GetMainCurrency: func() string {
@@ -994,6 +1023,21 @@ func (backend *Backend) createAndAddAccount(coin coinpkg.Coin, persistedConfig *
 	// This function is passed as a callback to the BTC account constructor. It is called when the
 	// keystore needs to determine whether an address belongs to an account on its same keystore.
 	getAddressCallback := func(coinCode coinpkg.Code, scriptHashHex blockchain.ScriptHashHex) (*addresses.AccountAddress, error) {
+		if persistedConfig.IsVault() {
+			for _, account := range backend.accounts {
+				if account.Config().Config.CoinCode != coinCode || account.Config().Config.PolicyID != persistedConfig.PolicyID {
+					continue
+				}
+				btcAccount, ok := account.(*btc.Account)
+				if !ok {
+					continue
+				}
+				if address := btcAccount.GetAddress(scriptHashHex); address != nil {
+					return address, nil
+				}
+			}
+			return nil, nil
+		}
 		accountsByKeystore, err := backend.AccountsByKeystore()
 		if err != nil {
 			return nil, err
@@ -1087,13 +1131,23 @@ func (backend *Backend) persistAccount(account config.Account, accountsConfig *c
 			backend.log.Errorf("An account with same code exists: %s", account.Code)
 			return errp.WithStack(errAccountAlreadyExists)
 		}
+		if account.PolicyID != "" && account.PolicyID == account2.PolicyID && account.CoinCode == account2.CoinCode {
+			return errp.WithStack(errAccountAlreadyExists)
+		}
 		if account.CoinCode == account2.CoinCode {
+			if account.IsVault() || account2.IsVault() {
+				continue
+			}
 			// We detect a duplicate account (subaccount in a unified account) if any of the
 			// configurations is already present.
 			for _, config := range account.SigningConfigurations {
 				for _, config2 := range account2.SigningConfigurations {
-					if config.ExtendedPublicKey().String() == config2.ExtendedPublicKey().String() {
-						return errp.WithStack(errAccountAlreadyExists)
+					for _, keyInfo := range config.KeyInfos() {
+						for _, keyInfo2 := range config2.KeyInfos() {
+							if keyInfo.ExtendedPublicKey.String() == keyInfo2.ExtendedPublicKey.String() {
+								return errp.WithStack(errAccountAlreadyExists)
+							}
+						}
 					}
 				}
 			}
@@ -1344,6 +1398,10 @@ func (backend *Backend) persistDefaultAccountConfigs(keystore keystore.Keystore,
 // maybeAddP2TR adds a taproot subaccount to all Bitcoin accounts if the keystore suports it.
 func (backend *Backend) maybeAddP2TR(keystore keystore.Keystore, accounts []*config.Account) error {
 	for _, account := range accounts {
+		// Skip vault accounts — P2TR upgrade only applies to single-sig accounts.
+		if account.IsVault() {
+			continue
+		}
 		if account.CoinCode == coinpkg.CodeBTC ||
 			account.CoinCode == coinpkg.CodeTBTC ||
 			account.CoinCode == coinpkg.CodeRBTC {

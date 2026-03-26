@@ -13,6 +13,23 @@
     "insured": "Insured account",
     "maybeProxyError": "Tor proxy enabled. Ensure that your Tor proxy is running properly, or disable the proxy setting.",
     "reconnecting": "Lost connection, trying to reconnect…",
+    "signingSessions": {
+      "broadcast": "Broadcast",
+      "cancel": "Cancel",
+      "confirmAbandon": {
+        "confirm": "Delete transaction",
+        "message": "Are you sure you want to delete this pending transaction? All collected signatures will be lost.",
+        "title": "Delete pending transaction"
+      },
+      "alreadySigned": "The connected keystore ({{name}}) has already signed this transaction. Please connect a different keystore to provide the next signature.",
+      "continue": "Continue",
+      "delete": "Delete",
+      "noDeviceConnected": "No keystore is connected. Please connect and unlock the keystore you want to sign with.",
+      "progress": "{{count}} of {{total}} signatures collected.",
+      "sending": "Sending to",
+      "sign": "Sign",
+      "signaturesLabel": "Signatures"
+    },
     "syncedAddressesCount": "Scanned {{count}} addresses",
     "uncoveredFunds": "You have coins on the following uncovered address types of your <strong>{{name}}</strong> account: {{uncovered}}.\nSince the account is insured, only coins received via the <strong>Native Segwit</strong> address type are covered. Coins on different address types, even if they are on the same account, are not insured.\nPlease move all your coins from the unsupported address types to the <strong>Native Segwit</strong> address type, so all your coins on this account are insured.",
     "uncoveredFundsLink": "Follow this guide on how to move your coins.",
@@ -29,13 +46,18 @@
     },
     "contractAddress": "Contract address",
     "contractAddressWarning": "Do not send any coins to the contract address otherwise they will be lost. Contract address is just for informational purposes.",
+    "exportRecoveryFile": "Export recovery file",
     "exportTransactions": "Export transaction history",
     "extendedPublicKey": "Extended public key",
     "label": "Account info",
+    "participant": "Participant {{number}}",
+    "policyId": "Policy ID",
     "scriptType": "Script type",
     "taproot": "The Taproot extended public key is not shown to protect from accidental misuse, as raw formats for this script type are not widely supported. If you want to view this key, connect your device to wallet software that supports the output descriptor format.",
     "title": "Account information",
     "verify": "Verify on device",
+    "vaultPolicy": "2-of-3 Vault (P2WSH)",
+    "vaultType": "Vault policy",
     "viewAccountDetails": "View account details",
     "xpubTypeChangeBtn": {
       "p2pkh": "View legacy P2PKH extended public key",
@@ -65,6 +87,19 @@
       "step": "Name account",
       "title": "Name your account"
     },
+    "selectAccountType": {
+      "nextButton": "Next",
+      "standard": {
+        "description": "Create a regular single-sig {{coinName}} account.",
+        "title": "Standard"
+      },
+      "step": "Choose account type",
+      "title": "Choose account type",
+      "vault": {
+        "description": "Create a 2-of-3 Bitcoin Vault for one owner using multiple BitBox02 devices.",
+        "title": "Vault"
+      }
+    },
     "selectCoin": {
       "nextButton": "Next",
       "step": "Select coin",
@@ -77,7 +112,32 @@
       "step": "Finished",
       "title": "Account added"
     },
-    "title": "Add account"
+    "title": "Add account",
+    "vault": {
+      "collectingDescription": "To set up your multisig vault, you need to connect three BitBox hardware wallets. Each BitBox must have already been set up previously. The order in which you add the devices does not matter. Once you have connected and unlocked the first one, click the \"Add device\" button to add this BitBox to your multisig vault.",
+      "complete": "Create Vault",
+      "create": "Create Vault",
+      "createDescription": "Vaults use a fixed 2-of-3 policy in v1. All Vaults are watch-only after setup and require the recovery file for migration to another host.",
+      "discard": "Discard draft",
+      "downloadDescriptor": "Download wallet descriptor",
+      "enrollSigner": "Add device",
+      "import": "Import Vault",
+      "importDescription": "Upload a wallet descriptor JSON file to recreate the watch-only Vault on this host.",
+      "importInvalid": "The file could not be parsed. Please select a valid wallet descriptor JSON file.",
+      "selectFile": "Select descriptor file",
+      "importOrCreate": "Vaults",
+      "invalidCoin": "Choose a Bitcoin network before creating a Vault.",
+      "policy": "Vault policy: 2-of-3 native segwit multisig",
+      "progress": "{{count}} of 3 hardware wallets added",
+      "recoveryAcknowledged": "I have downloaded the wallet descriptor and stored it safely.",
+      "setup": "Setup {{name}}",
+      "signerLabel": "Signer {{number}}",
+      "walletDescriptor": "Wallet descriptor",
+      "walletDescriptorIntro": "In order to be able to recover your multisig vault on a different host device or app, you must be in possession of a wallet descriptor file.",
+      "walletDescriptorPrivacy": "The descriptor file is like a treasure map for your wallet. It does not contain private keys, but it is privacy-sensitive.",
+      "walletDescriptorStorage": "You must download this file and store it securely. Ideally, save it in a password manager or store it in iCloud, Dropbox, or Google Drive.",
+      "title": "Bitcoin Vault"
+    }
   },
   "aopp": {
     "addressRequest": "{{host}} is requesting a receiving address.",
@@ -1420,15 +1480,20 @@
   "loading": "loading…",
   "manageAccounts": {
     "accountHidden": "This account has been hidden from your watch-only accounts. To see it again, please plug in your BitBox.",
+    "discard": "Discard",
     "editAccount": "Edit",
     "editAccountNameTitle": "Edit account name",
+    "incomplete": "Incomplete",
+    "importAccount": "Import account",
     "noAccounts": "no accounts found",
+    "resume": "Resume",
     "settings": {
       "hideTokens": "Hide tokens",
       "showTokens": "Show tokens ({{activeTokenCount}})"
     },
     "settingsButtonDescription": "Add and show/hide accounts",
     "title": "Manage accounts",
+    "vaults": "Vaults",
     "watchAccount": "Watch account",
     "watchAccountDescription": "This account is part of your watch-only accounts. You can hide it from your watch-only accounts using the toggle."
   },
@@ -1620,6 +1685,7 @@
     "scriptType": {
       "p2tr": "Taproot (newest format)",
       "p2wpkh": "Native Segwit (default)",
+      "p2wsh": "Vault (multisig)",
       "p2wpkh-p2sh": "Wrapped Segwit (compatible format)"
     },
     "selectAccount": "Select account",
@@ -1717,6 +1783,8 @@
       "infoMessage": "Carefully verify the amount and address are correct on the BitBox",
       "selected-coins": "Selected coins",
       "title": "Confirm and send transaction",
+      "vaultTitle": "Confirm and sign transaction",
+      "vaultInfoMessage": "Signature {{next}} of {{total}} required. Carefully verify the amount and address are correct on the BitBox",
       "to": "To",
       "total": "Total"
     },
@@ -1876,7 +1944,8 @@
     "device": "Manage device",
     "insurance": "Insurance",
     "leave": "Leave",
-    "settings": "Settings"
+    "settings": "Settings",
+    "vaults": "Vaults"
   },
   "success": {
     "create": {

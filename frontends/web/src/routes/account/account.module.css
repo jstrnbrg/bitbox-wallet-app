@@ -187,6 +187,35 @@
     transform: translateY(-10px);
 }
 
+.signingSessionMeta {
+    color: var(--color-secondary);
+    font-size: var(--size-small);
+    line-height: 1.285714;
+}
+
+.signingSessionContinue {
+    color: var(--color-blue);
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.signingSessionContinue:hover {
+    text-decoration: underline;
+}
+
+.signingSessionSignedBy {
+    color: var(--color-secondary);
+    display: block;
+    font-size: var(--size-small);
+}
+
+.signingSessionDetailActions {
+    display: flex;
+    gap: var(--space-half);
+    justify-content: flex-end;
+    padding-top: var(--space-default);
+}
+
 @media (max-width: 768px) {
 
     .searchButton {
@@ -194,5 +223,5 @@
         height: var(--item-height-small);
         text-align: left;
     }
-    
+
 }

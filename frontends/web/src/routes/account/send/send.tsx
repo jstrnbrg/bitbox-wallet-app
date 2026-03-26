@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useRef, useEffect, useCallback, useContext } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { TSelectedUTXOs } from './utxos';
 import { useMountedRef } from '@/hooks/mount';
@@ -64,6 +65,7 @@ export const Send = ({
   activeAccounts,
 }: TProps) => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { btcUnit, defaultCurrency } = useContext(RatesContext);
   const selectedUTXOsRef = useRef<TSelectedUTXOs>({});
   const [utxoDialogActive, setUtxoDialogActive] = useState(false);
@@ -118,13 +120,38 @@ export const Send = ({
   };
 
   const handleSend = useCallback(async () => {
-    const rootFingerprint = account.keystore.rootFingerprint;
-    const connectResult = await connectKeystore(rootFingerprint);
-    if (!connectResult.success) {
-      return;
-    }
     setIsConfirming(true);
     try {
+      if (account.accountType === 'vault') {
+        const createResult = await accountApi.createSigningSession(account.code, note);
+        if (!createResult.success) {
+          if (!createResult.aborted) {
+            alertUser(createResult.errorMessage);
+          }
+          return;
+        }
+        const signResult = await accountApi.signSigningSession(account.code, createResult.session.id);
+        if (!signResult.success) {
+          if (!signResult.aborted) {
+            alertUser(signResult.errorMessage);
+          }
+          return;
+        }
+        if (signResult.session.state === 'broadcasted' && signResult.session.txId) {
+          setSendResult({
+            success: true,
+            txId: signResult.session.txId,
+          });
+          return;
+        }
+        navigate(`/account/${account.code}`);
+        return;
+      }
+      const rootFingerprint = account.keystore.rootFingerprint;
+      const connectResult = await connectKeystore(rootFingerprint);
+      if (!connectResult.success) {
+        return;
+      }
       const result = await accountApi.sendTx(account.code, note);
       setSendResult(result);
     } catch (err) {
@@ -133,7 +160,7 @@ export const Send = ({
       // The following method allows pressing escape again.
       setIsConfirming(false);
     }
-  }, [account.code, account.keystore.rootFingerprint, note]);
+  }, [account.accountType, account.code, account.keystore.rootFingerprint, navigate, note]);
 
   const getValidTxInputData = useCallback((): Required<accountApi.TTxInput> | false => {
     if (
@@ -506,6 +533,7 @@ export const Send = ({
               note={note}
               hasSelectedUTXOs={hasSelectedUTXOs()}
               isConfirming={isConfirming}
+              isVault={account.accountType === 'vault'}
               selectedUTXOs={selectedUTXOsRef.current}
               coinCode={account.coinCode}
               transactionDetails={{
