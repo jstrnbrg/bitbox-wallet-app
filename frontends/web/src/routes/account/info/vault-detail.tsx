@@ -16,6 +16,8 @@ import { Header, Main } from '@/components/layout';
 import { View, ViewContent } from '@/components/view/view';
 import { MobileHeader } from '@/routes/settings/components/mobile-header';
 import { BackButton } from '@/components/backbutton/backbutton';
+import { Badge } from '@/components/badge/badge';
+import { USBSuccess } from '@/components/icon';
 import { A } from '@/components/anchor/anchor';
 import { Button } from '@/components/forms';
 import { CopyableInput } from '@/components/copy/Copy';
@@ -105,20 +107,36 @@ export const VaultDetail = ({
                   <strong>{t('accountInfo.policyId')}:</strong>
                   <code>{account.policyId}</code>
                 </div>
-                {(account.participants || []).map((participant, index) => (
-                  <div className={`${style.entry || ''} ${style.largeEntry || ''}`} key={`${participant.rootFingerprint}-${index}`}>
-                    <strong>
-                      {participant.name || t('accountInfo.participant', { number: index + 1 })}
-                    </strong>
-                    <code>{participant.rootFingerprint}</code>
-                    <code>{participant.keypath}</code>
-                    <CopyableInput
-                      alignLeft
-                      flexibleHeight
-                      value={participant.xpub}
-                    />
-                  </div>
-                ))}
+                {(account.participants || []).map((participant, index) => {
+                  const isConnected = account.connectedSigners?.includes(participant.rootFingerprint);
+                  return (
+                    <div className={`${style.entry || ''} ${style.largeEntry || ''}`} key={`${participant.rootFingerprint}-${index}`}>
+                      <strong>
+                        {participant.name || t('accountInfo.participant', { number: index + 1 })}
+                        {' '}
+                        {isConnected && (
+                          <Badge
+                            icon={props => (
+                              <USBSuccess style={{
+                                width: 'min(0.9rem, 12px)',
+                                height: 'min(0.9rem, 12px)',
+                              }} {...props} />
+                            )}
+                            type="success">
+                            {t('device.keystoreConnected')}
+                          </Badge>
+                        )}
+                      </strong>
+                      <code>{participant.rootFingerprint}</code>
+                      <code>{participant.keypath}</code>
+                      <CopyableInput
+                        alignLeft
+                        flexibleHeight
+                        value={participant.xpub}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
