@@ -12,18 +12,20 @@ import { GuideWrapper, GuidedContent, Header, Main } from '@/components/layout';
 import { View } from '@/components/view/view';
 import { Chart } from './chart';
 import { KeystoreBalance } from './keystorebalance';
+import { BalanceRow } from './balancerow';
 import { CoinBalance } from './coinbalance';
 import { AddBuyReceiveOnEmptyBalances } from '@/routes/account/info/buy-receive-cta';
 import { Entry } from '@/components/guide/entry';
 import { Guide } from '@/components/guide/guide';
 import { HideAmountsButton } from '@/components/hideamountsbutton/hideamountsbutton';
 import { AppContext } from '@/contexts/AppContext';
-import { getAccountsByKeystore } from '@/routes/account/utils';
+import { getAccountsByKeystore, getStandardAccounts, getVaultAccounts } from '@/routes/account/utils';
 import { RatesContext } from '@/contexts/RatesContext';
 import { ContentWrapper } from '@/components/contentwrapper/contentwrapper';
 import { GlobalBanners } from '@/components/banners';
 import { BackupReminder } from '@/components/banners/backup';
 import { OfflineError } from '@/components/banners/offline-error';
+import style from './accountssummary.module.css';
 
 type TProps = {
   accounts: accountApi.TAccount[];
@@ -44,7 +46,9 @@ export const AccountsSummary = ({
   const { hideAmounts } = useContext(AppContext);
   const { defaultCurrency } = useContext(RatesContext);
 
-  const accountsByKeystore = getAccountsByKeystore(accounts);
+  const standardAccounts = getStandardAccounts(accounts);
+  const vaultAccounts = getVaultAccounts(accounts);
+  const accountsByKeystore = getAccountsByKeystore(standardAccounts);
 
   const [chartData, setChartData] = useState<accountApi.TChartData>();
   const [accountsBalanceSummary, setAccountsBalanceSummary] = useState<accountApi.TAccountsBalanceSummary>();
@@ -204,6 +208,40 @@ export const AccountsSummary = ({
                   />
                 )
               ))}
+            {vaultAccounts.length > 0 && (
+              <div>
+                <div className={style.accountName}>
+                  <p>{t('sidebar.vaults')}</p>
+                </div>
+                <div className={style.balanceTable}>
+                  <table className={style.table}>
+                    <colgroup>
+                      <col width="33%" />
+                      <col width="33%" />
+                      <col width="*" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th>{t('accountSummary.name')}</th>
+                        <th>{t('accountSummary.balance')}</th>
+                        <th>{t('accountSummary.fiatBalance')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vaultAccounts.map(account => (
+                        <BalanceRow
+                          key={account.code}
+                          code={account.code}
+                          name={account.name}
+                          coinCode={account.coinCode}
+                          balance={balances?.[account.code]}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </View>
         </Main>
       </GuidedContent>
