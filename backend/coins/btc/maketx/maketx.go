@@ -218,6 +218,8 @@ func NewTxSpendAll(
 // the unspent outputs is selected to cover the needed amount.
 //
 // changeAddress: a change output to this address is added if needed.
+// additionalOutputs: extra outputs to include (e.g. inscription commit output). Their value is
+// added on top of the primary output amount for coin selection and fee calculation.
 func NewTx(
 	coin coinpkg.Coin,
 	spendableOutputs map[wire.OutPoint]UTXO,
@@ -226,6 +228,7 @@ func NewTx(
 	feePerKb btcutil.Amount,
 	changeAddress *addresses.AccountAddress,
 	log *logrus.Entry,
+	additionalOutputs ...*wire.TxOut,
 ) (*TxProposal, error) {
 	output := wire.NewTxOut(outputAmount, outputInfo.pkScript)
 
@@ -234,7 +237,21 @@ func NewTx(
 		panic("amount must be positive")
 	}
 	outputs := []*wire.TxOut{output}
+	// Add additional outputs and include their value in the target amount.
+	var additionalOutputsTotal btcutil.Amount
+	for _, addOut := range additionalOutputs {
+		outputs = append(outputs, addOut)
+		additionalOutputsTotal += btcutil.Amount(addOut.Value)
+	}
+	targetAmount += additionalOutputsTotal
 	changePKScript := changeAddress.PubkeyScript()
+
+	// Calculate the total additional output weight for fee estimation.
+	// The nonWitness factor (4) is applied because output data is non-witness.
+	additionalOutputsWeight := 0
+	for _, addOut := range additionalOutputs {
+		additionalOutputsWeight += 4 * outputSize(len(addOut.PkScript))
+	}
 
 	targetFee := btcutil.Amount(0)
 	for {
@@ -250,6 +267,9 @@ func NewTx(
 			toInputConfigurations(spendableOutputs, selectedOutPoints),
 			outputInfo.pkScriptLen(),
 			len(changePKScript))
+		// Add the weight of additional outputs (already multiplied by nonWitness factor).
+		// estimateTxSize returns vbytes (weight/4), so we add weight/4.
+		txSize += (additionalOutputsWeight + 3) / 4
 		maxRequiredFee := feeForSerializeSize(feePerKb, txSize, log)
 		if selectedOutputsSum-targetAmount < maxRequiredFee {
 			targetFee = maxRequiredFee
@@ -307,7 +327,7 @@ func NewTx(
 
 		return &TxProposal{
 			Coin:                 coin,
-			Amount:               targetAmount,
+			Amount:               btcutil.Amount(outputAmount),
 			Fee:                  finalFee,
 			ChangeAddress:        changeAddress,
 			PreviousOutputs:      previousOutputs,

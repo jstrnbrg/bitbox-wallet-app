@@ -2,7 +2,7 @@
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import * as accountApi from '@/api/account';
 import { statusChanged, syncAddressesCount, syncdone } from '@/api/accountsync';
 import { TDevices } from '@/api/devices';
@@ -81,6 +81,7 @@ const RemountAccount = ({
   devices,
 }: Props) => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
 
   const { btcUnit } = useContext(RatesContext);
 
@@ -101,6 +102,8 @@ const RemountAccount = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const debouncedSearchTerm = useDebounce(searchTerm, 200);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [inscriptionExists, setInscriptionExists] = useState<boolean | undefined>(undefined);
+  const [inscriptionConfirmed, setInscriptionConfirmed] = useState<boolean>(false);
 
   const supportedVendors = useLoad<MarketVendors>(getMarketVendors(code), [code]);
 
@@ -186,6 +189,21 @@ const RemountAccount = ({
   }, [loadSigningSessions]);
 
   useEffect(() => {
+    if (account?.accountType !== 'vault' || !status?.synced) {
+      if (account?.accountType !== 'vault') {
+        setInscriptionExists(undefined);
+      }
+      return;
+    }
+    accountApi.getVaultInscriptionStatus(code).then(result => {
+      if (result.success) {
+        setInscriptionExists(result.exists);
+        setInscriptionConfirmed(result.confirmed);
+      }
+    }).catch(console.error);
+  }, [account?.accountType, code, status?.synced]);
+
+  useEffect(() => {
     if (!confirmingSession) {
       return;
     }
@@ -234,14 +252,17 @@ const RemountAccount = ({
     && transactions.success
     && transactions.list.length === 0;
 
+  const isVaultWithoutInscription = account.accountType === 'vault' && inscriptionExists === false;
+  const isVaultPendingConfirmation = account.accountType === 'vault' && inscriptionExists === true && !inscriptionConfirmed;
 
   const actionButtonsProps = {
     code,
     accountDataLoaded: hasDataLoaded,
     coinCode: account.coinCode,
-    canSend: balance && balance.hasAvailable,
-    exchangeSupported,
-    account
+    canSend: balance && balance.hasAvailable && !isVaultPendingConfirmation,
+    exchangeSupported: exchangeSupported && !isVaultPendingConfirmation,
+    account,
+    disableReceive: isVaultPendingConfirmation,
   };
 
   const handleContinueSigningSession = (session: accountApi.TSigningSession) => {
@@ -342,12 +363,21 @@ const RemountAccount = ({
             <ViewHeader>
               <div className={style.balanceHeader}>
                 <Balance balance={balance} />
-                {!isAccountEmpty && <ActionButtons {...actionButtonsProps} />}
+                {!isAccountEmpty && !isVaultWithoutInscription && <ActionButtons {...actionButtonsProps} />}
               </div>
             </ViewHeader>
             <ViewContent>
               <div className={style.accountHeader}>
-                {isAccountEmpty && (
+                {isVaultWithoutInscription && (
+                  <div className={style.vaultFundCTA}>
+                    <SubTitle>{t('account.vault.fundRequired.title')}</SubTitle>
+                    <p>{t('account.vault.fundRequired.message')}</p>
+                    <Button primary onClick={() => navigate(`/account/${code}/fund-vault`)}>
+                      {t('account.vault.fundRequired.button')}
+                    </Button>
+                  </div>
+                )}
+                {!isVaultWithoutInscription && isAccountEmpty && (
                   <BuyReceiveCTA
                     account={account}
                     code={code}
@@ -361,7 +391,7 @@ const RemountAccount = ({
                   <p className={style.errorLoadTransactions}>
                     {t('transactions.errorLoadTransactions')}
                   </p>
-                ) : !isAccountEmpty && (
+                ) : !isAccountEmpty && !isVaultWithoutInscription && (
                   <>
                     <div className={style.titleRow}>
                       <SubTitle className={style.titleWithButton}>
@@ -408,7 +438,7 @@ const RemountAccount = ({
                 )}
               </div>
 
-              {account.accountType === 'vault' && pendingSigningSessions.map(session => (
+              {account.accountType === 'vault' && !isVaultWithoutInscription && pendingSigningSessions.map(session => (
                 <section className={txStyle.tx} key={session.id}>
                   <div className={txStyle.txContent} data-tx-type="send">
                     <span className={txStyle.txIcon}>

@@ -7,12 +7,18 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/accounts"
 	accountsTypes "github.com/BitBoxSwiss/bitbox-wallet-app/backend/accounts/types"
+	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc"
+	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/blockchain"
 	coinpkg "github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/coin"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/config"
+	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/keystore"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/signing"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/vaults"
+	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/vaults/backup"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/util/errp"
+	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 )
 
 func defaultVaultName(coin coinpkg.Coin, accountNumber uint16) string {
@@ -252,6 +258,30 @@ func (backend *Backend) CompleteVaultSetup(id string, name string, recoveryAckno
 	}
 	var accountCode accountsTypes.Code
 	err = backend.config.ModifyAccountsConfig(func(accountsConfig *config.AccountsConfig) error {
+		// Remove any existing broken vault entry with the same code or policy ID so we can
+		// re-create it cleanly. This handles the case where a previous setup attempt persisted
+		// a vault with an empty/broken descriptor configuration.
+		canonicalParticipants := vaults.CanonicalizeParticipants(draft.Participants)
+		accountKeypath := vaults.BIP48AccountKeypath(draft.Network, draft.AccountNumber)
+		expectedPolicyID := vaults.ComputePolicyID(
+			draft.Network,
+			vaults.PolicyTemplate2Of3,
+			2,
+			signing.ScriptTypeP2WSH,
+			accountKeypath,
+			canonicalParticipants,
+		)
+		expectedCode := vaultAccountCode(expectedPolicyID, draft.Network, draft.AccountNumber)
+		cleaned := make([]*config.Account, 0, len(accountsConfig.Accounts))
+		for _, acct := range accountsConfig.Accounts {
+			if acct.Code == expectedCode || (acct.PolicyID == expectedPolicyID && acct.CoinCode == draft.Network) {
+				backend.log.Infof("Removing stale vault account %s to re-create it", acct.Code)
+				continue
+			}
+			cleaned = append(cleaned, acct)
+		}
+		accountsConfig.Accounts = cleaned
+
 		var err error
 		accountCode, err = backend.persistVaultAccountConfig(
 			draft.Network,
@@ -362,4 +392,353 @@ func mustAccountNumber(cfg *signing.Configuration) uint16 {
 
 var timeNow = func() time.Time {
 	return time.Now()
+}
+
+// VaultOnChainBackupPayload computes the encrypted backup payload for a vault draft.
+// The payload is ready to be inscribed on-chain via a commit/reveal transaction pair.
+func (backend *Backend) VaultOnChainBackupPayload(id string) ([]byte, error) {
+	draft, err := backend.vaultDraftStore.GetDraft(id)
+	if err != nil {
+		return nil, err
+	}
+	if len(draft.Participants) != 3 {
+		return nil, errp.New("vault draft is not ready for backup")
+	}
+	canonicalParticipants := vaults.CanonicalizeParticipants(draft.Participants)
+	descriptor := vaults.AccountDescriptor(canonicalParticipants)
+
+	var xpubs [3]*hdkeychain.ExtendedKey
+	var rootFingerprints [3][]byte
+	for i, p := range canonicalParticipants {
+		xpubs[i] = p.KeyInfo.ExtendedPublicKey
+		rootFingerprints[i] = p.KeyInfo.RootFingerprint
+	}
+
+	return backup.EncryptDescriptor(descriptor, draft.Network, draft.AccountNumber, xpubs, rootFingerprints)
+}
+
+// VaultOnChainBackupBeacons returns the 3 beacon addresses for a vault draft.
+func (backend *Backend) VaultOnChainBackupBeacons(id string) ([3]*backup.BeaconResult, error) {
+	draft, err := backend.vaultDraftStore.GetDraft(id)
+	if err != nil {
+		return [3]*backup.BeaconResult{}, err
+	}
+	if len(draft.Participants) != 3 {
+		return [3]*backup.BeaconResult{}, errp.New("vault draft is not ready for backup")
+	}
+	canonicalParticipants := vaults.CanonicalizeParticipants(draft.Participants)
+	var xpubs [3]*hdkeychain.ExtendedKey
+	for i, p := range canonicalParticipants {
+		xpubs[i] = p.KeyInfo.ExtendedPublicKey
+	}
+	return backup.AllBeaconAddresses(draft.Network, xpubs)
+}
+
+// VaultOnChainBackupPayloadFromAccount computes the encrypted backup payload for an existing vault account.
+func (backend *Backend) VaultOnChainBackupPayloadFromAccount(accountCode accountsTypes.Code) ([]byte, error) {
+	account := backend.config.AccountsConfig().Lookup(accountCode)
+	if account == nil || !account.IsVault() || len(account.SigningConfigurations) == 0 {
+		return nil, errp.New("vault account not found")
+	}
+	cfg := account.SigningConfigurations[0]
+	if cfg.BitcoinDescriptor == nil {
+		return nil, errp.New("vault descriptor missing")
+	}
+	accountNumber, err := cfg.AccountNumber()
+	if err != nil {
+		return nil, err
+	}
+	keyInfos := cfg.KeyInfos()
+	if len(keyInfos) != 3 {
+		return nil, errp.New("vault must have exactly 3 key infos")
+	}
+	var xpubs [3]*hdkeychain.ExtendedKey
+	var rootFingerprints [3][]byte
+	for i, ki := range keyInfos {
+		xpubs[i] = ki.ExtendedPublicKey
+		rootFingerprints[i] = ki.RootFingerprint
+	}
+	return backup.EncryptDescriptor(
+		cfg.BitcoinDescriptor.Descriptor,
+		account.CoinCode,
+		accountNumber,
+		xpubs,
+		rootFingerprints,
+	)
+}
+
+// VaultOnChainBackupBeaconsFromAccount returns the 3 beacon addresses for an existing vault account.
+func (backend *Backend) VaultOnChainBackupBeaconsFromAccount(accountCode accountsTypes.Code) ([3]*backup.BeaconResult, error) {
+	account := backend.config.AccountsConfig().Lookup(accountCode)
+	if account == nil || !account.IsVault() || len(account.SigningConfigurations) == 0 {
+		return [3]*backup.BeaconResult{}, errp.New("vault account not found")
+	}
+	keyInfos := account.SigningConfigurations[0].KeyInfos()
+	if len(keyInfos) != 3 {
+		return [3]*backup.BeaconResult{}, errp.New("vault must have exactly 3 key infos")
+	}
+	var xpubs [3]*hdkeychain.ExtendedKey
+	for i, ki := range keyInfos {
+		xpubs[i] = ki.ExtendedPublicKey
+	}
+	return backup.AllBeaconAddresses(account.CoinCode, xpubs)
+}
+
+// EligibleFundingAccount describes a standard account that can fund a vault.
+type EligibleFundingAccount struct {
+	Code    accountsTypes.Code `json:"code"`
+	Name    string             `json:"name"`
+	Balance string             `json:"balance"`
+}
+
+// GetEligibleFundingAccounts returns standard BTC accounts with balance that can fund the given vault.
+func (backend *Backend) GetEligibleFundingAccounts(vaultAccountCode accountsTypes.Code) ([]EligibleFundingAccount, error) {
+	vaultConfig := backend.config.AccountsConfig().Lookup(vaultAccountCode)
+	if vaultConfig == nil || !vaultConfig.IsVault() {
+		return nil, errp.New("vault account not found")
+	}
+	var result []EligibleFundingAccount
+	for _, acct := range backend.Accounts() {
+		acctConfig := acct.Config().Config
+		if acctConfig.CoinCode != vaultConfig.CoinCode {
+			continue
+		}
+		if acctConfig.IsVault() {
+			continue
+		}
+		if !acct.Synced() {
+			continue
+		}
+		balance, err := acct.Balance()
+		if err != nil {
+			continue
+		}
+		available := balance.Available()
+		if available.BigInt().Sign() <= 0 {
+			continue
+		}
+		result = append(result, EligibleFundingAccount{
+			Code:    acctConfig.Code,
+			Name:    acctConfig.Name,
+			Balance: available.BigInt().String(),
+		})
+	}
+	return result, nil
+}
+
+// FundVaultPropose creates a transaction proposal on the source account that sends to the vault
+// receive address and includes OP_RETURN + beacon outputs for the descriptor backup.
+func (backend *Backend) FundVaultPropose(
+	sourceCode accountsTypes.Code,
+	vaultCode accountsTypes.Code,
+	args *accounts.TxProposalArgs,
+) (coinpkg.Amount, coinpkg.Amount, coinpkg.Amount, error) {
+	// Get vault backup payload.
+	payload, err := backend.VaultOnChainBackupPayloadFromAccount(vaultCode)
+	if err != nil {
+		return coinpkg.Amount{}, coinpkg.Amount{}, coinpkg.Amount{}, errp.Wrap(err, "failed to get backup payload")
+	}
+
+	// Get vault beacon addresses.
+	beacons, err := backend.VaultOnChainBackupBeaconsFromAccount(vaultCode)
+	if err != nil {
+		return coinpkg.Amount{}, coinpkg.Amount{}, coinpkg.Amount{}, errp.Wrap(err, "failed to get beacon addresses")
+	}
+
+	// Get the source account (must be a BTC account).
+	sourceAccountIface, err := backend.GetAccountFromCode(sourceCode)
+	if err != nil {
+		return coinpkg.Amount{}, coinpkg.Amount{}, coinpkg.Amount{}, errp.Wrap(err, "source account not found")
+	}
+	sourceAccount, ok := sourceAccountIface.(*btc.Account)
+	if !ok {
+		return coinpkg.Amount{}, coinpkg.Amount{}, coinpkg.Amount{}, errp.New("source account is not a BTC account")
+	}
+
+	// Build OP_RETURN script with the encrypted payload.
+	opReturnScript, err := backup.BuildOPReturnScript(payload)
+	if err != nil {
+		return coinpkg.Amount{}, coinpkg.Amount{}, coinpkg.Amount{}, errp.Wrap(err, "failed to build OP_RETURN script")
+	}
+
+	// Set the vault receive address as the recipient.
+	vaultAccountIface, err := backend.GetAccountFromCode(vaultCode)
+	if err != nil {
+		return coinpkg.Amount{}, coinpkg.Amount{}, coinpkg.Amount{}, errp.Wrap(err, "vault account not found")
+	}
+	receiveAddresses, err := vaultAccountIface.GetUnusedReceiveAddresses()
+	if err != nil || len(receiveAddresses) == 0 || len(receiveAddresses[0].Addresses) == 0 {
+		return coinpkg.Amount{}, coinpkg.Amount{}, coinpkg.Amount{}, errp.New("could not get vault receive address")
+	}
+	args.RecipientAddress = receiveAddresses[0].Addresses[0].EncodeForHumans()
+
+	// Additional outputs: OP_RETURN (value=0) + 3 beacon dust outputs.
+	args.AdditionalOutputs = []accounts.AdditionalOutput{
+		{PkScript: opReturnScript, Value: 0},
+		{PkScript: beacons[0].PkScript, Value: backup.BeaconDust},
+		{PkScript: beacons[1].PkScript, Value: backup.BeaconDust},
+		{PkScript: beacons[2].PkScript, Value: backup.BeaconDust},
+	}
+
+	// Propose the transaction on the source account.
+	return sourceAccount.TxProposal(args)
+}
+
+// FundVaultSend signs and broadcasts the funding transaction which includes the OP_RETURN
+// descriptor backup and beacon outputs in a single transaction.
+func (backend *Backend) FundVaultSend(
+	sourceCode accountsTypes.Code,
+	note string,
+) (string, error) {
+	sourceAccountIface, err := backend.GetAccountFromCode(sourceCode)
+	if err != nil {
+		return "", errp.Wrap(err, "source account not found")
+	}
+	sourceAccount, ok := sourceAccountIface.(*btc.Account)
+	if !ok {
+		return "", errp.New("source account is not a BTC account")
+	}
+
+	txID, err := sourceAccount.SendTx(note)
+	if err != nil {
+		return "", errp.Wrap(err, "failed to send funding transaction")
+	}
+
+	backend.log.Infof("Fund vault: tx %s", txID)
+	return txID, nil
+}
+
+// RecoverVaultFromChain attempts to recover a vault from on-chain backup using a single xpub.
+// The xpub should be from any one of the vault participants.
+func (backend *Backend) RecoverVaultFromChain(
+	bc blockchain.Interface,
+	network coinpkg.Code,
+	xpub *hdkeychain.ExtendedKey,
+	name string,
+) (accountsTypes.Code, error) {
+	result, err := backup.ScanForBackup(bc, network, xpub)
+	if err != nil {
+		return "", errp.Wrap(err, "on-chain backup scan failed")
+	}
+
+	recovery, err := vaults.RecoveryFileFromDescriptor(result.Descriptor, network, result.AccountNumber)
+	if err != nil {
+		return "", errp.Wrap(err, "failed to reconstruct recovery file from descriptor")
+	}
+
+	return backend.ImportVaultRecovery(recovery, name)
+}
+
+// maybeDiscoverVaults scans the blockchain for on-chain vault backups that include the
+// connected keystore as a participant. It derives beacon addresses for each account number
+// and queries Electrum for transactions. If a valid backup is found, the vault is imported.
+// This mirrors maybeAddHiddenUnusedAccounts for standard account discovery.
+func (backend *Backend) maybeDiscoverVaults(ks keystore.Keystore) {
+	backend.log.Info("vault discovery: starting scan")
+	// Vault discovery only applies to BTC-family coins.
+	var coinCodes []coinpkg.Code
+	switch {
+	case backend.arguments.Regtest():
+		coinCodes = []coinpkg.Code{coinpkg.CodeRBTC}
+	case backend.Testing():
+		coinCodes = []coinpkg.Code{coinpkg.CodeTBTC}
+	default:
+		coinCodes = []coinpkg.Code{coinpkg.CodeBTC}
+	}
+
+	for _, coinCode := range coinCodes {
+		coinInstance, err := backend.Coin(coinCode)
+		if err != nil {
+			backend.log.WithError(err).Errorf("vault discovery: could not get coin %s", coinCode)
+			continue
+		}
+		if !ks.SupportsCoin(coinInstance) {
+			continue
+		}
+		btcCoin, ok := coinInstance.(*btc.Coin)
+		if !ok {
+			continue
+		}
+		// Ensure the coin's Electrum connection is initialized.
+		btcCoin.Initialize()
+		bc := btcCoin.Blockchain()
+
+		for accountNumber := uint16(0); accountNumber < backup.MaxAccountScan; accountNumber++ {
+			accountKeypath := vaults.BIP48AccountKeypath(coinCode, accountNumber)
+			xpub, err := ks.ExtendedPublicKey(coinInstance, accountKeypath)
+			if err != nil {
+				backend.log.WithError(err).Errorf(
+					"vault discovery: could not get xpub for %s account %d", coinCode, accountNumber)
+				break
+			}
+
+			backend.log.Infof("vault discovery: scanning %s account %d", coinCode, accountNumber)
+			recovery, hasHistory := backend.scanBeaconForVault(bc, coinCode, xpub)
+			if !hasHistory {
+				backend.log.Infof("vault discovery: no beacon history for %s account %d, stopping", coinCode, accountNumber)
+				break
+			}
+			if recovery == nil {
+				// Beacon had history but no valid backup — continue to next account number.
+				continue
+			}
+
+			_, importErr := backend.ImportVaultRecovery(recovery, "")
+			if importErr != nil {
+				// errAccountAlreadyExists is expected for vaults we already know about.
+				backend.log.WithError(importErr).Debug("vault discovery: import skipped or failed")
+			} else {
+				backend.log.Infof("vault discovery: auto-discovered vault for %s account %d",
+					coinCode, recovery.AccountNumber)
+			}
+		}
+	}
+}
+
+// scanBeaconForVault checks a single beacon address for a valid on-chain vault backup.
+// Returns the recovery file if found, nil if no valid backup.
+// hasHistory is true if the beacon address has any transaction history (used for gap limit).
+func (backend *Backend) scanBeaconForVault(
+	bc blockchain.Interface,
+	coinCode coinpkg.Code,
+	xpub *hdkeychain.ExtendedKey,
+) (recovery *vaults.RecoveryFile, hasHistory bool) {
+	beacon, err := backup.ComputeBeaconAddress(coinCode, xpub)
+	if err != nil {
+		backend.log.WithError(err).Error("vault discovery: failed to compute beacon")
+		return nil, false
+	}
+
+	history, err := bc.ScriptHashGetHistory(beacon.ScriptHashHex)
+	if err != nil {
+		backend.log.WithError(err).Error("vault discovery: failed to query beacon history")
+		return nil, false
+	}
+
+	if len(history) == 0 {
+		return nil, false
+	}
+
+	for _, txInfo := range history {
+		txHash := txInfo.TXHash.Hash()
+		tx, err := bc.TransactionGet(txHash)
+		if err != nil {
+			continue
+		}
+		payload := backup.ParseOPReturnPayload(tx)
+		if payload == nil {
+			continue
+		}
+		descriptor, acctNum, _, err := backup.TryDecryptDescriptor(payload, coinCode, xpub)
+		if err != nil {
+			continue
+		}
+		rec, err := vaults.RecoveryFileFromDescriptor(descriptor, coinCode, acctNum)
+		if err != nil {
+			backend.log.WithError(err).Error("vault discovery: failed to reconstruct recovery file")
+			continue
+		}
+		return rec, true
+	}
+	return nil, true
 }

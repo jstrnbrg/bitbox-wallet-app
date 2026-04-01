@@ -35,6 +35,12 @@ type PaymentRequest struct {
 	Signature     []byte
 }
 
+// AdditionalOutput is an extra output to include in a transaction beyond the primary recipient.
+type AdditionalOutput struct {
+	PkScript []byte
+	Value    int64
+}
+
 // TxProposalArgs are the arguments needed when creating a tx proposal.
 type TxProposalArgs struct {
 	RecipientAddress string
@@ -47,6 +53,9 @@ type TxProposalArgs struct {
 	SelectedUTXOs  map[wire.OutPoint]struct{}
 	Note           string
 	PaymentRequest *PaymentRequest
+	// AdditionalOutputs are extra outputs added to the transaction (e.g. inscription commit output).
+	// Their total value is added on top of the primary output amount when selecting coins.
+	AdditionalOutputs []AdditionalOutput
 }
 
 // Interface is the API of a Account.

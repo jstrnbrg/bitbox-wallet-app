@@ -15,6 +15,7 @@ import (
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/accounts"
 	accountsTypes "github.com/BitBoxSwiss/bitbox-wallet-app/backend/accounts/types"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/bitsurance"
+	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/vaults/backup"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/addresses"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/blockchain"
 	keystorePkg "github.com/BitBoxSwiss/bitbox-wallet-app/backend/keystore"
@@ -931,6 +932,42 @@ func (account *Account) VerifyExtendedPublicKey(signingConfigIndex int) (bool, e
 		)
 	}
 	return false, nil
+}
+
+// VaultInscriptionResult holds the result of checking for an on-chain vault descriptor backup.
+type VaultInscriptionResult struct {
+	Exists    bool
+	Confirmed bool
+	TxID      string
+}
+
+// CheckVaultInscription checks whether the on-chain descriptor backup exists for this
+// vault account. Returns the backup transaction ID and confirmation status if found.
+func (account *Account) CheckVaultInscription() (*VaultInscriptionResult, error) {
+	cfg := account.Config().Config
+	if !cfg.IsVault() || len(cfg.SigningConfigurations) == 0 {
+		return &VaultInscriptionResult{}, nil
+	}
+	keyInfos := cfg.SigningConfigurations[0].KeyInfos()
+	if len(keyInfos) != 3 {
+		return nil, errp.New("vault must have exactly 3 key infos")
+	}
+	var xpubs [3]*hdkeychain.ExtendedKey
+	for i, ki := range keyInfos {
+		xpubs[i] = ki.ExtendedPublicKey
+	}
+	status, err := backup.CheckBackupExists(account.coin.Blockchain(), cfg.CoinCode, xpubs)
+	if err != nil {
+		return nil, errp.Wrap(err, "failed to check vault backup")
+	}
+	if !status.Found {
+		return &VaultInscriptionResult{}, nil
+	}
+	return &VaultInscriptionResult{
+		Exists:    true,
+		Confirmed: status.Confirmed,
+		TxID:      status.TxHash.String(),
+	}, nil
 }
 
 // IsChange returns true if there is an address corresponding to the provided scriptHashHex in our

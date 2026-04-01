@@ -7,6 +7,7 @@ import {
   completeVaultSetup,
   discardVaultSetup,
   enrollVaultSetupSigner,
+  getAccounts,
   getVaultSetupDraft,
   getVaultSetupRecoveryFile,
   importVault,
@@ -187,7 +188,21 @@ export const VaultSetup = () => {
         }
         return;
       }
-      navigate(`/account/${result.accountCode}`);
+      // Wait for the account to appear in the accounts list before navigating.
+      // ReinitializeAccounts() fires a websocket event that the frontend picks up
+      // asynchronously, so we poll briefly to avoid navigating before the account exists.
+      const accountCode = result.accountCode;
+      const maxAttempts = 20;
+      for (let i = 0; i < maxAttempts; i++) {
+        const accounts = await getAccounts();
+        if (accounts.some(a => a.code === accountCode)) {
+          navigate(`/account/${accountCode}`);
+          return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      // Navigate anyway after timeout — the account should appear shortly.
+      navigate(`/account/${accountCode}`);
     } catch (error) {
       console.error(error);
       setErrorMessage(t('genericError'));
@@ -291,29 +306,31 @@ export const VaultSetup = () => {
                       </p>
                     ) : (
                       <>
-                        <h3 className={styles.sectionTitle}>{t('addAccount.vault.walletDescriptor')}</h3>
+                        <h3 className={styles.sectionTitle}>{t('addAccount.vault.onChainBackup')}</h3>
+                        <div className={styles.descriptorSection}>
+                          <p className={styles.description}>
+                            {t('addAccount.vault.onChainBackupAutoDescription')}
+                          </p>
+                          <Checkbox
+                            checked={recoveryAcknowledged}
+                            id="vault-recovery-ack"
+                            onChange={event => setRecoveryAcknowledged(event.target.checked)}
+                            title={t('addAccount.vault.onChainBackupAcknowledgement')}>
+                            {t('addAccount.vault.onChainBackupAcknowledgement')}
+                          </Checkbox>
+                        </div>
                         {recoveryFile && (
-                          <div className={styles.descriptorSection}>
-                            <p className={styles.description}>
-                              {t('addAccount.vault.walletDescriptorIntro')}
-                            </p>
-                            <p className={styles.description}>
-                              {t('addAccount.vault.walletDescriptorPrivacy')}
-                            </p>
-                            <p className={styles.description}>
-                              {t('addAccount.vault.walletDescriptorStorage')}
-                            </p>
-                            <Button disabled={busy} onClick={handleDownloadWalletDescriptor} secondary>
-                              {t('addAccount.vault.downloadDescriptor')}
-                            </Button>
-                            <Checkbox
-                              checked={recoveryAcknowledged}
-                              id="vault-recovery-ack"
-                              onChange={event => setRecoveryAcknowledged(event.target.checked)}
-                              title={t('addAccount.vault.recoveryAcknowledged')}>
-                              {t('addAccount.vault.recoveryAcknowledged')}
-                            </Checkbox>
-                          </div>
+                          <>
+                            <h3 className={styles.sectionTitle}>{t('addAccount.vault.walletDescriptorAdditional')}</h3>
+                            <div className={styles.descriptorSection}>
+                              <p className={styles.description}>
+                                {t('addAccount.vault.walletDescriptorIntro')}
+                              </p>
+                              <Button disabled={busy} onClick={handleDownloadWalletDescriptor} secondary>
+                                {t('addAccount.vault.downloadDescriptor')}
+                              </Button>
+                            </div>
+                          </>
                         )}
                       </>
                     )}

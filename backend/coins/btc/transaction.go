@@ -199,6 +199,13 @@ func (account *Account) newTx(args *accounts.TxProposalArgs) (
 			return nil, nil, err
 		}
 		account.log.Infof("Change address script type: %s", changeAddress.AccountConfiguration.ScriptType())
+
+		// Build additional outputs from TxProposalArgs.
+		var additionalTxOuts []*wire.TxOut
+		for _, addOut := range args.AdditionalOutputs {
+			additionalTxOuts = append(additionalTxOuts, wire.NewTxOut(addOut.Value, addOut.PkScript))
+		}
+
 		txProposal, err = maketx.NewTx(
 			account.coin,
 			wireUTXO,
@@ -207,6 +214,7 @@ func (account *Account) newTx(args *accounts.TxProposalArgs) (
 			feeRatePerKb,
 			changeAddress,
 			account.log,
+			additionalTxOuts...,
 		)
 		if err != nil {
 			return nil, nil, err

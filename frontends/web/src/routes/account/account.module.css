@@ -225,3 +225,13 @@
     }
 
 }
+
+.vaultFundCTA {
+    text-align: center;
+    padding: var(--space-default) 0;
+}
+
+.vaultFundCTA p {
+    margin-bottom: var(--space-default);
+    color: var(--color-secondary);
+}

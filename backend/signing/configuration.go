@@ -398,7 +398,10 @@ func (configuration *Configuration) KeyInfos() []KeyInfo {
 		}
 		return nil
 	}
-	return []KeyInfo{configuration.EthereumSimple.KeyInfo}
+	if configuration.EthereumSimple != nil {
+		return []KeyInfo{configuration.EthereumSimple.KeyInfo}
+	}
+	return nil
 }
 
 // RootFingerprints returns all root fingerprints referenced by this configuration.

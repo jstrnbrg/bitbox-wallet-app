@@ -36,6 +36,7 @@ import (
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/market"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/rates"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/vaults"
+	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/vaults/backup"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/versioninfo"
 	utilConfig "github.com/BitBoxSwiss/bitbox-wallet-app/util/config"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/util/errp"
@@ -100,6 +101,13 @@ type Backend interface {
 	DiscardVaultSetup(id string) error
 	ImportVaultRecovery(recovery *vaults.RecoveryFile, name string) (accountsTypes.Code, error)
 	ExportVaultRecoveryFile(accountCode accountsTypes.Code) (*vaults.RecoveryFile, error)
+	VaultOnChainBackupPayload(id string) ([]byte, error)
+	VaultOnChainBackupBeacons(id string) ([3]*backup.BeaconResult, error)
+	VaultOnChainBackupPayloadFromAccount(accountCode accountsTypes.Code) ([]byte, error)
+	VaultOnChainBackupBeaconsFromAccount(accountCode accountsTypes.Code) ([3]*backup.BeaconResult, error)
+	GetEligibleFundingAccounts(vaultAccountCode accountsTypes.Code) ([]backend.EligibleFundingAccount, error)
+	FundVaultPropose(sourceCode accountsTypes.Code, vaultCode accountsTypes.Code, args *accounts.TxProposalArgs) (coinpkg.Amount, coinpkg.Amount, coinpkg.Amount, error)
+	FundVaultSend(sourceCode accountsTypes.Code, note string) (string, error)
 	SetAccountActive(accountCode accountsTypes.Code, active bool) error
 	SetTokenActive(accountCode accountsTypes.Code, tokenCode string, active bool) error
 	RenameAccount(accountCode accountsTypes.Code, name string) error
@@ -233,7 +241,14 @@ func NewHandlers(
 	getAPIRouterNoError(apiRouter)("/vault-setup/{id}/recovery-file", handlers.getVaultSetupRecoveryFile).Methods("GET")
 	getAPIRouterNoError(apiRouter)("/vault-setup/{id}/complete", handlers.postVaultSetupComplete).Methods("POST")
 	getAPIRouterNoError(apiRouter)("/vault-setup/{id}/discard", handlers.postVaultSetupDiscard).Methods("POST")
+	getAPIRouterNoError(apiRouter)("/vault-setup/{id}/onchain-backup-payload", handlers.getVaultOnChainBackupPayload).Methods("GET")
+	getAPIRouterNoError(apiRouter)("/vault-setup/{id}/onchain-backup-beacons", handlers.getVaultOnChainBackupBeacons).Methods("GET")
 	getAPIRouterNoError(apiRouter)("/vault-import", handlers.postVaultImport).Methods("POST")
+	getAPIRouterNoError(apiRouter)("/fund-vault/eligible-accounts/{vaultCode}", handlers.getEligibleFundingAccounts).Methods("GET")
+	getAPIRouterNoError(apiRouter)("/fund-vault/onchain-backup-payload/{vaultCode}", handlers.getVaultOnChainBackupPayloadFromAccount).Methods("GET")
+	getAPIRouterNoError(apiRouter)("/fund-vault/onchain-backup-beacons/{vaultCode}", handlers.getVaultOnChainBackupBeaconsFromAccount).Methods("GET")
+	getAPIRouterNoError(apiRouter)("/fund-vault/propose", handlers.postFundVaultPropose).Methods("POST")
+	getAPIRouterNoError(apiRouter)("/fund-vault/send", handlers.postFundVaultSend).Methods("POST")
 	getAPIRouter(apiRouter)("/test/register", handlers.postRegisterTestKeystore).Methods("POST")
 	getAPIRouterNoError(apiRouter)("/test/deregister", handlers.postDeregisterTestKeystore).Methods("POST")
 	getAPIRouterNoError(apiRouter)("/coins/convert-to-plain-fiat", handlers.getConvertToPlainFiat).Methods("GET")
@@ -1374,6 +1389,43 @@ func (handlers *Handlers) postVaultSetupDiscard(r *http.Request) interface{} {
 	return response{Success: true}
 }
 
+func (handlers *Handlers) getVaultOnChainBackupPayload(r *http.Request) interface{} {
+	type response struct {
+		Success      bool   `json:"success"`
+		Payload      string `json:"payload,omitempty"`
+		ErrorMessage string `json:"errorMessage,omitempty"`
+	}
+	payload, err := handlers.backend.VaultOnChainBackupPayload(mux.Vars(r)["id"])
+	if err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	return response{Success: true, Payload: base64.StdEncoding.EncodeToString(payload)}
+}
+
+func (handlers *Handlers) getVaultOnChainBackupBeacons(r *http.Request) interface{} {
+	type beaconInfo struct {
+		Address   string `json:"address"`
+		PkScript  string `json:"pkScript"`
+	}
+	type response struct {
+		Success      bool         `json:"success"`
+		Beacons      []beaconInfo `json:"beacons,omitempty"`
+		ErrorMessage string       `json:"errorMessage,omitempty"`
+	}
+	beacons, err := handlers.backend.VaultOnChainBackupBeacons(mux.Vars(r)["id"])
+	if err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	result := make([]beaconInfo, 3)
+	for i, b := range beacons {
+		result[i] = beaconInfo{
+			Address:  b.Address.EncodeAddress(),
+			PkScript: hex.EncodeToString(b.PkScript),
+		}
+	}
+	return response{Success: true, Beacons: result}
+}
+
 func (handlers *Handlers) postVaultImport(r *http.Request) interface{} {
 	type response struct {
 		Success      bool               `json:"success"`
@@ -1395,6 +1447,125 @@ func (handlers *Handlers) postVaultImport(r *http.Request) interface{} {
 		return response{Success: false, ErrorMessage: err.Error()}
 	}
 	return response{Success: true, AccountCode: accountCode}
+}
+
+func (handlers *Handlers) getEligibleFundingAccounts(r *http.Request) interface{} {
+	type response struct {
+		Success      bool                             `json:"success"`
+		Accounts     []backend.EligibleFundingAccount `json:"accounts,omitempty"`
+		ErrorMessage string                           `json:"errorMessage,omitempty"`
+	}
+	vaultCode := accountsTypes.Code(mux.Vars(r)["vaultCode"])
+	accounts, err := handlers.backend.GetEligibleFundingAccounts(vaultCode)
+	if err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	return response{Success: true, Accounts: accounts}
+}
+
+func (handlers *Handlers) getVaultOnChainBackupPayloadFromAccount(r *http.Request) interface{} {
+	type response struct {
+		Success      bool   `json:"success"`
+		Payload      string `json:"payload,omitempty"`
+		ErrorMessage string `json:"errorMessage,omitempty"`
+	}
+	vaultCode := accountsTypes.Code(mux.Vars(r)["vaultCode"])
+	payload, err := handlers.backend.VaultOnChainBackupPayloadFromAccount(vaultCode)
+	if err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	return response{Success: true, Payload: base64.StdEncoding.EncodeToString(payload)}
+}
+
+func (handlers *Handlers) getVaultOnChainBackupBeaconsFromAccount(r *http.Request) interface{} {
+	type beaconInfo struct {
+		Address  string `json:"address"`
+		PkScript string `json:"pkScript"`
+	}
+	type response struct {
+		Success      bool         `json:"success"`
+		Beacons      []beaconInfo `json:"beacons,omitempty"`
+		ErrorMessage string       `json:"errorMessage,omitempty"`
+	}
+	vaultCode := accountsTypes.Code(mux.Vars(r)["vaultCode"])
+	beacons, err := handlers.backend.VaultOnChainBackupBeaconsFromAccount(vaultCode)
+	if err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	result := make([]beaconInfo, 3)
+	for i, b := range beacons {
+		result[i] = beaconInfo{
+			Address:  b.Address.EncodeAddress(),
+			PkScript: hex.EncodeToString(b.PkScript),
+		}
+	}
+	return response{Success: true, Beacons: result}
+}
+
+func (handlers *Handlers) postFundVaultPropose(r *http.Request) interface{} {
+	type request struct {
+		SourceCode string `json:"sourceCode"`
+		VaultCode  string `json:"vaultCode"`
+		Amount     string `json:"amount"`
+		FeeTarget  string `json:"feeTarget"`
+		CustomFee  string `json:"customFee"`
+		SendAll    string `json:"sendAll"`
+	}
+	var req request
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+	}
+	var sendAmount coinpkg.SendAmount
+	if req.SendAll == "yes" {
+		sendAmount = coinpkg.NewSendAmountAll()
+	} else {
+		sendAmount = coinpkg.NewSendAmount(req.Amount)
+	}
+	args := &accounts.TxProposalArgs{
+		Amount:        sendAmount,
+		FeeTargetCode: accounts.FeeTargetCode(req.FeeTarget),
+		CustomFee:     req.CustomFee,
+	}
+	sourceCode := accountsTypes.Code(req.SourceCode)
+	vaultCode := accountsTypes.Code(req.VaultCode)
+
+	outputAmount, fee, total, err := handlers.backend.FundVaultPropose(sourceCode, vaultCode, args)
+	if err != nil {
+		return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+	}
+
+	sourceAccount, err := handlers.backend.GetAccountFromCode(sourceCode)
+	if err != nil {
+		return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+	}
+	accountConfig := sourceAccount.Config()
+	return map[string]interface{}{
+		"success": true,
+		"amount":  outputAmount.FormatWithConversions(sourceAccount.Coin(), false, accountConfig.RateUpdater),
+		"fee":     fee.FormatWithConversions(sourceAccount.Coin(), true, accountConfig.RateUpdater),
+		"total":   total.FormatWithConversions(sourceAccount.Coin(), false, accountConfig.RateUpdater),
+	}
+}
+
+func (handlers *Handlers) postFundVaultSend(r *http.Request) interface{} {
+	type request struct {
+		SourceCode string `json:"sourceCode"`
+		Note       string `json:"note"`
+	}
+	type response struct {
+		Success      bool   `json:"success"`
+		TxID         string `json:"txId,omitempty"`
+		ErrorMessage string `json:"errorMessage,omitempty"`
+	}
+	var req request
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	txID, err := handlers.backend.FundVaultSend(accountsTypes.Code(req.SourceCode), req.Note)
+	if err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	return response{Success: true, TxID: txID}
 }
 
 func (handlers *Handlers) getMarketRegionCodes(r *http.Request) interface{} {

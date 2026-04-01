@@ -67,6 +67,7 @@ func NewHandlers(
 	handleFunc("/signing-sessions/{id}/sign", handlers.ensureAccountInitialized(handlers.postSignSigningSession)).Methods("POST")
 	handleFunc("/signing-sessions/{id}/broadcast", handlers.ensureAccountInitialized(handlers.postBroadcastSigningSession)).Methods("POST")
 	handleFunc("/signing-sessions/{id}/abandon", handlers.ensureAccountInitialized(handlers.postAbandonSigningSession)).Methods("POST")
+	handleFunc("/vault-inscription-status", handlers.ensureAccountInitialized(handlers.getVaultInscriptionStatus)).Methods("GET")
 	handleFunc("/sign-address", handlers.ensureAccountInitialized(handlers.postSignBTCAddress)).Methods("POST")
 	handleFunc("/has-secure-output", handlers.ensureAccountInitialized(handlers.getHasSecureOutput)).Methods("GET")
 	handleFunc("/has-payment-request", handlers.ensureAccountInitialized(handlers.getHasPaymentRequest)).Methods("GET")
@@ -1012,4 +1013,27 @@ func (handlers *Handlers) getHasPaymentRequest(r *http.Request) (interface{}, er
 	}
 
 	return response{Success: true}, nil
+}
+
+func (handlers *Handlers) getVaultInscriptionStatus(r *http.Request) (interface{}, error) {
+	type response struct {
+		Success   bool   `json:"success"`
+		Exists    bool   `json:"exists"`
+		Confirmed bool   `json:"confirmed"`
+		TxID      string `json:"txId,omitempty"`
+	}
+	btcAccount, ok := handlers.account.(*btc.Account)
+	if !ok {
+		return response{Success: true, Exists: false}, nil
+	}
+	result, err := btcAccount.CheckVaultInscription()
+	if err != nil {
+		return response{Success: false}, nil
+	}
+	return response{
+		Success:   true,
+		Exists:    result.Exists,
+		Confirmed: result.Confirmed,
+		TxID:      result.TxID,
+	}, nil
 }

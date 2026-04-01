@@ -31,11 +31,12 @@ const (
 type DraftState string
 
 const (
-	DraftStateCollectingSigners DraftState = "collectingSigners"
-	DraftStateReadyForBackup    DraftState = "readyForBackup"
-	DraftStateReadyToComplete   DraftState = "readyToComplete"
-	DraftStateCompleted         DraftState = "completed"
-	DraftStateDiscarded         DraftState = "discarded"
+	DraftStateCollectingSigners      DraftState = "collectingSigners"
+	DraftStateReadyForBackup         DraftState = "readyForBackup"
+	DraftStateAwaitingOnChainBackup  DraftState = "awaitingOnChainBackup"
+	DraftStateReadyToComplete        DraftState = "readyToComplete"
+	DraftStateCompleted              DraftState = "completed"
+	DraftStateDiscarded              DraftState = "discarded"
 )
 
 // Draft models a persisted vault setup draft.
@@ -181,6 +182,51 @@ func RecoveryFileFromDraft(draft *Draft) *RecoveryFile {
 	recovery.Descriptors.Receive = descriptorForChain(0, canonicalParticipants)
 	recovery.Descriptors.Change = descriptorForChain(1, canonicalParticipants)
 	return recovery
+}
+
+// RecoveryFileFromDescriptor reconstructs a recovery file from a descriptor string,
+// network, and account number. This is used during on-chain backup recovery when only
+// the encrypted descriptor is available (no participant names or other metadata).
+func RecoveryFileFromDescriptor(descriptor string, network coinpkg.Code, accountNumber uint16) (*RecoveryFile, error) {
+	// Parse the descriptor to extract participant info.
+	cfg, err := signing.NewBitcoinDescriptorConfiguration(descriptor)
+	if err != nil {
+		return nil, errp.Wrap(err, "invalid descriptor")
+	}
+	keyInfos, err := cfg.BitcoinDescriptor.KeyInfos()
+	if err != nil {
+		return nil, errp.Wrap(err, "failed to extract key infos from descriptor")
+	}
+	participants := make([]signing.BitcoinPolicyParticipant, len(keyInfos))
+	for i, ki := range keyInfos {
+		participants[i] = signing.BitcoinPolicyParticipant{KeyInfo: ki}
+	}
+	canonicalParticipants := CanonicalizeParticipants(participants)
+	accountKeypath := BIP48AccountKeypath(network, accountNumber)
+	policyID := ComputePolicyID(
+		network,
+		PolicyTemplate2Of3,
+		2,
+		signing.ScriptTypeP2WSH,
+		accountKeypath,
+		canonicalParticipants,
+	)
+	recovery := &RecoveryFile{
+		Format:         RecoveryFormatV1,
+		Network:        network,
+		Policy:         PolicyTemplate2Of3,
+		Descriptor:     descriptor,
+		Threshold:      2,
+		ScriptType:     signing.ScriptTypeP2WSH,
+		PolicyID:       policyID,
+		AccountNumber:  accountNumber,
+		AccountKeypath: accountKeypath,
+		Participants:   canonicalParticipants,
+		CreatedAt:      time.Now(),
+	}
+	recovery.Descriptors.Receive = descriptorForChain(0, canonicalParticipants)
+	recovery.Descriptors.Change = descriptorForChain(1, canonicalParticipants)
+	return recovery, nil
 }
 
 var bucketDrafts = []byte("drafts")

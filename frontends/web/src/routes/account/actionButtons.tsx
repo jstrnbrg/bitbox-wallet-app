@@ -18,9 +18,10 @@ type TProps = {
   exchangeSupported?: boolean;
   account: TAccount;
   accountDataLoaded: boolean;
+  disableReceive?: boolean;
 };
 
-export const ActionButtons = ({ canSend, code, coinCode, exchangeSupported, account, accountDataLoaded }: TProps) => {
+export const ActionButtons = ({ canSend, code, coinCode, exchangeSupported, account, accountDataLoaded, disableReceive }: TProps) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const walletConnectEnabled = isEthereumBased(account.coinCode) && !account.isToken;
@@ -60,7 +61,7 @@ export const ActionButtons = ({ canSend, code, coinCode, exchangeSupported, acco
 
       <ButtonLink
         className={style.button}
-        disabled={!accountDataLoaded}
+        disabled={!accountDataLoaded || disableReceive}
         primary
         to={`/account/${code}/receive`}
       >

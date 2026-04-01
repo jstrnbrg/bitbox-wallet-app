@@ -813,6 +813,7 @@ func (backend *Backend) registerKeystore(keystore keystore.Keystore) {
 	backend.connectKeystore.onConnect(keystore)
 
 	go backend.maybeAddHiddenUnusedAccounts()
+	go backend.maybeDiscoverVaults(keystore)
 }
 
 // deregisterKeystore removes the keystore with the given root fingerprint.

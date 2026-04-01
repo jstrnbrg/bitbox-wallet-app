@@ -454,6 +454,7 @@ export const addAccount = (coinCode: string, name: string): Promise<TAddAccount>
 export type TVaultDraftState =
   | 'collectingSigners'
   | 'readyForBackup'
+  | 'awaitingOnChainBackup'
   | 'readyToComplete'
   | 'completed'
   | 'discarded';
@@ -553,6 +554,35 @@ export const discardVaultSetup = (id: string): Promise<{ success: boolean; error
   return apiPost(`vault-setup/${id}/discard`);
 };
 
+type TVaultOnChainBackupPayloadResponse = {
+  success: true;
+  payload: string; // base64-encoded
+} | {
+  success: false;
+  errorMessage: string;
+};
+
+type TVaultBeaconInfo = {
+  address: string;
+  pkScript: string;
+};
+
+type TVaultOnChainBackupBeaconsResponse = {
+  success: true;
+  beacons: TVaultBeaconInfo[];
+} | {
+  success: false;
+  errorMessage: string;
+};
+
+export const getVaultOnChainBackupPayload = (id: string): Promise<TVaultOnChainBackupPayloadResponse> => {
+  return apiGet(`vault-setup/${id}/onchain-backup-payload`);
+};
+
+export const getVaultOnChainBackupBeacons = (id: string): Promise<TVaultOnChainBackupBeaconsResponse> => {
+  return apiGet(`vault-setup/${id}/onchain-backup-beacons`);
+};
+
 export const importVault = (
   recoveryFile: TVaultRecoveryFile,
   name: string,
@@ -562,6 +592,65 @@ export const importVault = (
 
 export const exportVaultRecoveryFile = (code: AccountCode): Promise<TVaultRecoveryFile> => {
   return apiGet(`account/${code}/recovery-file`);
+};
+
+export type TVaultInscriptionStatus = {
+  success: boolean;
+  exists: boolean;
+  confirmed: boolean;
+  txId?: string;
+};
+
+export const getVaultInscriptionStatus = (code: AccountCode): Promise<TVaultInscriptionStatus> => {
+  return apiGet(`account/${code}/vault-inscription-status`);
+};
+
+export type TEligibleFundingAccount = {
+  code: AccountCode;
+  name: string;
+  balance: string;
+};
+
+type TEligibleFundingAccountsResponse = {
+  success: boolean;
+  accounts?: TEligibleFundingAccount[];
+};
+
+export const getEligibleFundingAccounts = (vaultCode: AccountCode): Promise<TEligibleFundingAccountsResponse> => {
+  return apiGet(`fund-vault/eligible-accounts/${vaultCode}`);
+};
+
+export const getVaultOnChainBackupPayloadFromAccount = (vaultCode: AccountCode): Promise<{success: boolean; payload: string}> => {
+  return apiGet(`fund-vault/onchain-backup-payload/${vaultCode}`);
+};
+
+export const getVaultOnChainBackupBeaconsFromAccount = (vaultCode: AccountCode): Promise<{success: boolean; beacons: Array<{address: string; pkScript: string}>}> => {
+  return apiGet(`fund-vault/onchain-backup-beacons/${vaultCode}`);
+};
+
+export const fundVaultPropose = (
+  sourceCode: AccountCode,
+  vaultCode: AccountCode,
+  amount: string,
+  feeTarget: FeeTargetCode,
+  customFee: string,
+  sendAll: boolean,
+): Promise<TTxProposalResult> => {
+  return apiPost('fund-vault/propose', {
+    sourceCode,
+    vaultCode,
+    amount,
+    feeTarget,
+    customFee,
+    sendAll: sendAll ? 'yes' : 'no',
+  });
+};
+
+export const fundVaultSend = (
+  sourceCode: AccountCode,
+  note: string,
+): Promise<TSendTx> => {
+  return apiPost('fund-vault/send', { sourceCode, note });
 };
 
 export type TSigningSessionState =

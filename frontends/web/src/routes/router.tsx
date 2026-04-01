@@ -17,6 +17,7 @@ import { Info } from './account/info/info';
 import { XPubDetail } from './account/info/xpub-detail';
 import { Receive } from './account/receive/receive';
 import { SendWrapper } from './account/send/send-wrapper';
+import { FundVaultWrapper } from './account/fund-vault';
 import { AccountsSummary } from './account/summary/accountssummary';
 import { DeviceSwitch } from './device/deviceswitch';
 import { NoDeviceConnected } from './device/no-device-connected';
@@ -101,6 +102,13 @@ export const AppRouter = ({ devices, devicesKey, accounts, activeAccounts }: TAp
 
   const AccSend = (<InjectParams>
     <SendWrapper
+      code={'' /* dummy to satisfy TS */}
+      activeAccounts={activeAccounts}
+    />
+  </InjectParams>);
+
+  const AccFundVault = (<InjectParams>
+    <FundVaultWrapper
       code={'' /* dummy to satisfy TS */}
       activeAccounts={activeAccounts}
     />
@@ -264,6 +272,7 @@ export const AppRouter = ({ devices, devicesKey, accounts, activeAccounts }: TAp
         <Route path="account/:code">
           <Route index element={Acc} />
           <Route path="send" element={AccSend} />
+          <Route path="fund-vault" element={AccFundVault} />
           <Route path="receive" element={AccReceive} />
           <Route path="info" element={AccInfo} />
           <Route path="info/xpub-detail" element={AccXPubDetail} />
