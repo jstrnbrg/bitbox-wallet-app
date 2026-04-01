@@ -15,6 +15,7 @@ import { BTCDirectOTC } from './market/btcdirect-otc';
 import { Bitrefill } from './market/bitrefill';
 import { Info } from './account/info/info';
 import { XPubDetail } from './account/info/xpub-detail';
+import { VaultDetail } from './account/info/vault-detail';
 import { Receive } from './account/receive/receive';
 import { SendWrapper } from './account/send/send-wrapper';
 import { FundVaultWrapper } from './account/fund-vault';
@@ -129,6 +130,12 @@ export const AppRouter = ({ devices, devicesKey, accounts, activeAccounts }: TAp
 
   const AccXPubDetail = (<InjectParams>
     <XPubDetail
+      code={''}
+      accounts={activeAccounts} />
+  </InjectParams>);
+
+  const AccVaultDetail = (<InjectParams>
+    <VaultDetail
       code={''}
       accounts={activeAccounts} />
   </InjectParams>);
@@ -276,6 +283,7 @@ export const AppRouter = ({ devices, devicesKey, accounts, activeAccounts }: TAp
           <Route path="receive" element={AccReceive} />
           <Route path="info" element={AccInfo} />
           <Route path="info/xpub-detail" element={AccXPubDetail} />
+          <Route path="info/vault-detail" element={AccVaultDetail} />
           <Route path="wallet-connect/connect" element={AccConnectScreenWC} />
           <Route path="wallet-connect/dashboard" element={AccDashboardWC} />
         </Route>
