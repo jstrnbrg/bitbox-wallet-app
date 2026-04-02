@@ -39,6 +39,22 @@ ELECTRS_RPC_PORT1=52001
 ELECTRS_RPC_PORT2=52002
 ELECTRS_MONITORING_PORT2=24225
 
+# On macOS, --net=host doesn't work, so we use port mappings and host.docker.internal.
+# On Linux, --net=host works natively and is simpler.
+if [ "$(uname)" = "Darwin" ]; then
+    ELECTRS_NET_ARGS="-p ${ELECTRS_RPC_PORT1}:${ELECTRS_RPC_PORT1}"
+    ELECTRS_NET_ARGS2="-p ${ELECTRS_RPC_PORT2}:${ELECTRS_RPC_PORT2}"
+    ELECTRS_DAEMON_HOST="host.docker.internal"
+    ELECTRS_BIND="0.0.0.0"
+    BITCOIND_RPCALLOWIP="0.0.0.0/0"
+else
+    ELECTRS_NET_ARGS="--net=host"
+    ELECTRS_NET_ARGS2="--net=host"
+    ELECTRS_DAEMON_HOST="${DOCKER_IP}"
+    ELECTRS_BIND="127.0.0.1"
+    BITCOIND_RPCALLOWIP="${DOCKER_IP}/16"
+fi
+
 docker run -v $BITCOIN_DATADIR:/bitcoin/.bitcoin --name=bitcoind-regtest \
        -p ${BITCOIND_RPC_PORT}:${BITCOIND_RPC_PORT} \
        -p ${BITCOIND_PORT}:${BITCOIND_PORT} \
@@ -51,13 +67,13 @@ docker run -v $BITCOIN_DATADIR:/bitcoin/.bitcoin --name=bitcoind-regtest \
        -rpcpassword=dbb \
        -rpcbind=0.0.0.0 \
        -printtoconsole=0 \
-       -rpcallowip=$DOCKER_IP/16 &
+       -rpcallowip=${BITCOIND_RPCALLOWIP} &
 
 sleep 1
 
 docker run \
        -u $(id -u $USER) \
-       --net=host \
+       ${ELECTRS_NET_ARGS} \
        -v $BITCOIN_DATADIR/.bitcoin:/bitcoin/.bitcoin \
        -v $ELECTRS_DATADIR1:/data \
        --name=electrs-regtest1 \
@@ -65,15 +81,15 @@ docker run \
         --cookie-file=/data/rpccreds \
         --log-filters INFO \
         --network=regtest \
-        --daemon-rpc-addr=${DOCKER_IP}:${BITCOIND_RPC_PORT} \
-        --daemon-p2p-addr=${DOCKER_IP}:${BITCOIND_PORT} \
-        --electrum-rpc-addr=127.0.0.1:${ELECTRS_RPC_PORT1} \
+        --daemon-rpc-addr=${ELECTRS_DAEMON_HOST}:${BITCOIND_RPC_PORT} \
+        --daemon-p2p-addr=${ELECTRS_DAEMON_HOST}:${BITCOIND_PORT} \
+        --electrum-rpc-addr=${ELECTRS_BIND}:${ELECTRS_RPC_PORT1} \
         --daemon-dir=/bitcoin/.bitcoin \
         --db-dir=/data &
 
 docker run \
        -u $(id -u $USER) \
-       --net=host \
+       ${ELECTRS_NET_ARGS2} \
        -v $BITCOIN_DATADIR/.bitcoin:/bitcoin/.bitcoin \
        -v $ELECTRS_DATADIR2:/data \
        --name=electrs-regtest2 \
@@ -81,10 +97,10 @@ docker run \
         --cookie-file=/data/rpccreds \
         --log-filters INFO \
         --network=regtest \
-        --daemon-rpc-addr=${DOCKER_IP}:${BITCOIND_RPC_PORT} \
-        --daemon-p2p-addr=${DOCKER_IP}:${BITCOIND_PORT} \
-        --electrum-rpc-addr=127.0.0.1:${ELECTRS_RPC_PORT2} \
-        --monitoring-addr=127.0.0.1:${ELECTRS_MONITORING_PORT2} \
+        --daemon-rpc-addr=${ELECTRS_DAEMON_HOST}:${BITCOIND_RPC_PORT} \
+        --daemon-p2p-addr=${ELECTRS_DAEMON_HOST}:${BITCOIND_PORT} \
+        --electrum-rpc-addr=${ELECTRS_BIND}:${ELECTRS_RPC_PORT2} \
+        --monitoring-addr=${ELECTRS_BIND}:${ELECTRS_MONITORING_PORT2} \
         --daemon-dir=/bitcoin/.bitcoin \
         --db-dir=/data &
 
