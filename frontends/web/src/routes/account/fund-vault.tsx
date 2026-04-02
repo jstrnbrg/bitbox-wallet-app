@@ -19,6 +19,7 @@ import { CoinInput } from './send/components/inputs/coin-input';
 import { FiatInput } from './send/components/inputs/fiat-input';
 import { NoteInput } from './send/components/inputs/note-input';
 import { FeeTargets } from './send/feetargets';
+import { ConfirmSend } from './send/components/confirm/confirm';
 import { SendResult } from './send/components/result';
 import { AmountWithUnit } from '@/components/amount/amount-with-unit';
 import { FiatValue } from '@/components/amount/fiat-value';
@@ -59,7 +60,7 @@ export const FundVault = ({ account, activeAccounts }: TProps) => {
   const [valid, setValid] = useState<boolean>(false);
   const [isUpdatingProposal, setIsUpdatingProposal] = useState<boolean>(false);
   const [proposedFee, setProposedFee] = useState<accountApi.TAmountWithConversions>();
-  const [, setProposedTotal] = useState<accountApi.TAmountWithConversions>();
+  const [proposedTotal, setProposedTotal] = useState<accountApi.TAmountWithConversions>();
   const [proposedAmount, setProposedAmount] = useState<accountApi.TAmountWithConversions>();
   const [sendResult, setSendResult] = useState<accountApi.TSendTx>();
   const [isConfirming, setIsConfirming] = useState<boolean>(false);
@@ -362,6 +363,23 @@ export const FundVault = ({ account, activeAccounts }: TProps) => {
                 </>
               )}
 
+            <ConfirmSend
+              note={note}
+              hasSelectedUTXOs={false}
+              isConfirming={isConfirming}
+              isVault={false}
+              selectedUTXOs={{}}
+              coinCode={account.coinCode}
+              transactionDetails={{
+                selectedReceiverAccountName: account.name,
+                proposedFee,
+                proposedAmount,
+                proposedTotal,
+                customFee,
+                feeTarget,
+                recipientAddress: '',
+              }}
+            />
               {sendResult && (
                 <SendResult
                   code={account.code}
