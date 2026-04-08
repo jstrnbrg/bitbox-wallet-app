@@ -3,6 +3,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -11,8 +12,12 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"os/exec"
 	"runtime/debug"
 	"slices"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/accounts"
@@ -60,6 +65,7 @@ type Backend interface {
 	DefaultAppConfig() config.AppConfig
 	Coin(coinpkg.Code) (coinpkg.Coin, error)
 	Testing() bool
+	Regtest() bool
 	Accounts() backend.AccountsList
 	AccountsByKeystore() (backend.KeystoresAccountsListMap, error)
 	AccountsFiatAndCoinBalance(backend.AccountsList, string) (*big.Rat, map[coinpkg.Code]*big.Int, error)
@@ -140,6 +146,10 @@ type Handlers struct {
 	backendEvents     chan interface{}
 	websocketUpgrader websocket.Upgrader
 	log               *logrus.Entry
+
+	// regtestMu protects regtestAddr.
+	regtestMu   sync.Mutex
+	regtestAddr string
 }
 
 // ConnectionData contains the port and authorization token for communication with the backend.
@@ -251,6 +261,10 @@ func NewHandlers(
 	getAPIRouterNoError(apiRouter)("/fund-vault/send", handlers.postFundVaultSend).Methods("POST")
 	getAPIRouter(apiRouter)("/test/register", handlers.postRegisterTestKeystore).Methods("POST")
 	getAPIRouterNoError(apiRouter)("/test/deregister", handlers.postDeregisterTestKeystore).Methods("POST")
+	getAPIRouterNoError(apiRouter)("/regtest/status", handlers.getRegtestStatus).Methods("GET")
+	getAPIRouterNoError(apiRouter)("/regtest/setup", handlers.postRegtestSetup).Methods("POST")
+	getAPIRouterNoError(apiRouter)("/regtest/mine", handlers.postRegtestMine).Methods("POST")
+	getAPIRouterNoError(apiRouter)("/regtest/send", handlers.postRegtestSend).Methods("POST")
 	getAPIRouterNoError(apiRouter)("/coins/convert-to-plain-fiat", handlers.getConvertToPlainFiat).Methods("GET")
 	getAPIRouterNoError(apiRouter)("/coins/convert-from-fiat", handlers.getConvertFromFiat).Methods("GET")
 	getAPIRouter(apiRouter)("/coins/tltc/headers/status", handlers.getHeadersStatus(coinpkg.CodeTLTC)).Methods("GET")
@@ -936,6 +950,151 @@ func (handlers *Handlers) postRegisterTestKeystore(r *http.Request) (interface{}
 func (handlers *Handlers) postDeregisterTestKeystore(*http.Request) interface{} {
 	handlers.backend.DeregisterKeystore()
 	return nil
+}
+
+// runBitcoinCli runs a bitcoin-cli command inside the bitcoind-regtest docker container.
+// wallet can be empty for non-wallet RPCs (e.g. createwallet, generatetoaddress).
+func runBitcoinCli(wallet string, args ...string) (string, error) {
+	baseArgs := []string{
+		"exec",
+		"bitcoind-regtest",
+		"bitcoin-cli",
+		"-regtest",
+		"-datadir=/bitcoin",
+		"-rpcuser=dbb",
+		"-rpcpassword=dbb",
+		"-rpcport=10332",
+	}
+	if wallet != "" {
+		baseArgs = append(baseArgs, "-rpcwallet="+wallet)
+	}
+	cmdArgs := append(baseArgs, args...)
+	cmd := exec.Command("docker", cmdArgs...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", errp.Newf("bitcoin-cli %s failed: %s: %s", strings.Join(args, " "), err, stderr.String())
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+func (handlers *Handlers) getRegtestStatus(*http.Request) interface{} {
+	handlers.regtestMu.Lock()
+	defer handlers.regtestMu.Unlock()
+
+	// If we lost the in-memory address (e.g. servewallet restart), try to recover it from
+	// the existing regtest wallet in bitcoind.
+	if handlers.regtestAddr == "" && handlers.backend.Regtest() {
+		// Try loading the wallet (it may already be loaded or may exist on disk).
+		_, _ = runBitcoinCli("", "loadwallet", "testwallet")
+		addr, err := runBitcoinCli("testwallet", "getnewaddress")
+		if err == nil && addr != "" {
+			handlers.regtestAddr = addr
+		}
+	}
+
+	return map[string]interface{}{
+		"active": handlers.backend.Regtest(),
+		"ready":  handlers.regtestAddr != "",
+	}
+}
+
+func (handlers *Handlers) postRegtestSetup(*http.Request) interface{} {
+	if !handlers.backend.Regtest() {
+		return map[string]interface{}{"success": false, "errorMessage": "not in regtest mode"}
+	}
+	handlers.regtestMu.Lock()
+	defer handlers.regtestMu.Unlock()
+
+	// Create wallet, or load it if it already exists (e.g. after bitcoind restart).
+	_, err := runBitcoinCli("", "createwallet", "testwallet")
+	if err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			// Wallet exists on disk but may not be loaded into memory.
+			_, loadErr := runBitcoinCli("", "loadwallet", "testwallet")
+			if loadErr != nil && !strings.Contains(loadErr.Error(), "already loaded") {
+				return map[string]interface{}{"success": false, "errorMessage": loadErr.Error()}
+			}
+		} else {
+			return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+		}
+	}
+
+	addr, err := runBitcoinCli("testwallet", "getnewaddress")
+	if err != nil {
+		return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+	}
+	handlers.regtestAddr = addr
+
+	_, err = runBitcoinCli("", "generatetoaddress", "101", addr)
+	if err != nil {
+		return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+	}
+
+	// Give Electrs time to index the new blocks, then reinitialize accounts so they
+	// re-subscribe with the current chain state.
+	go func() {
+		time.Sleep(3 * time.Second)
+		handlers.backend.ReinitializeAccounts()
+	}()
+
+	return map[string]interface{}{"success": true}
+}
+
+func (handlers *Handlers) postRegtestMine(*http.Request) interface{} {
+	if !handlers.backend.Regtest() {
+		return map[string]interface{}{"success": false, "errorMessage": "not in regtest mode"}
+	}
+	handlers.regtestMu.Lock()
+	addr := handlers.regtestAddr
+	handlers.regtestMu.Unlock()
+
+	if addr == "" {
+		return map[string]interface{}{"success": false, "errorMessage": "run setup first"}
+	}
+
+	_, err := runBitcoinCli("", "generatetoaddress", "1", addr)
+	if err != nil {
+		return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+	}
+	return map[string]interface{}{"success": true}
+}
+
+func (handlers *Handlers) postRegtestSend(r *http.Request) interface{} {
+	if !handlers.backend.Regtest() {
+		return map[string]interface{}{"success": false, "errorMessage": "not in regtest mode"}
+	}
+	handlers.regtestMu.Lock()
+	addr := handlers.regtestAddr
+	handlers.regtestMu.Unlock()
+
+	if addr == "" {
+		return map[string]interface{}{"success": false, "errorMessage": "run setup first"}
+	}
+
+	var body struct {
+		Address string `json:"address"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return map[string]interface{}{"success": false, "errorMessage": "invalid request body"}
+	}
+	if body.Address == "" {
+		return map[string]interface{}{"success": false, "errorMessage": "address is required"}
+	}
+
+	_, err := runBitcoinCli("testwallet", "sendtoaddress", body.Address, "1.0")
+	if err != nil {
+		return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+	}
+
+	// Mine a block to confirm the transaction.
+	_, err = runBitcoinCli("", "generatetoaddress", "1", addr)
+	if err != nil {
+		return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+	}
+
+	return map[string]interface{}{"success": true}
 }
 
 func (handlers *Handlers) getBTCParseExternalAmount(r *http.Request) interface{} {

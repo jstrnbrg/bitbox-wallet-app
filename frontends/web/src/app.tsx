@@ -29,6 +29,7 @@ import { AuthRequired } from './components/auth/authrequired';
 import { WCSigningRequest } from './components/wallet-connect/incoming-signing-request';
 import { Providers } from './contexts/providers';
 import { BottomNavigation } from './components/bottom-navigation/bottom-navigation';
+import { RegtestBar } from './components/regtest-bar/regtest-bar';
 import styles from './app.module.css';
 
 export const App = () => {
@@ -206,6 +207,7 @@ export const App = () => {
               activeAccounts={activeAccounts}
             />
           )}
+          <RegtestBar accounts={activeAccounts} />
           <Alert />
           <Confirm />
         </div>

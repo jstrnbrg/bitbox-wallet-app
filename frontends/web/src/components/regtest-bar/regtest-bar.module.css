@@ -1,0 +1,66 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+.container {
+  position: fixed;
+  bottom: 0;
+  left: var(--sidebar-width-large);
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background-color: #f59e0b;
+  color: #000;
+  font-size: 13px;
+  font-weight: 500;
+  z-index: 100;
+  height: 44px;
+  box-sizing: border-box;
+}
+
+.label {
+  font-weight: 700;
+  margin-right: 4px;
+  white-space: nowrap;
+}
+
+.button {
+  padding: 4px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  background-color: rgba(255, 255, 255, 0.3);
+  color: #000;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s;
+}
+
+.button:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.5);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.feedback {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.success {
+  color: #065f46;
+}
+
+.error {
+  color: #991b1b;
+}
+
+@media (max-width: 900px) {
+  .container {
+    left: 0;
+  }
+}

@@ -54,6 +54,27 @@ export const getDevServers = (): Promise<boolean> => {
   return apiGet('dev-servers');
 };
 
+export type TRegtestStatus = {
+  active: boolean;
+  ready: boolean;
+};
+
+export const getRegtestStatus = (): Promise<TRegtestStatus> => {
+  return apiGet('regtest/status');
+};
+
+export const regtestSetup = (): Promise<TSuccess> => {
+  return apiPost('regtest/setup');
+};
+
+export const regtestMine = (): Promise<TSuccess> => {
+  return apiPost('regtest/mine');
+};
+
+export const regtestSend = (address: string): Promise<TSuccess> => {
+  return apiPost('regtest/send', { address });
+};
+
 type TQRCode = FailResponse | (SuccessResponse & { data: string });
 
 export const getQRCode = (data: string) => {

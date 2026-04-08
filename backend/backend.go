@@ -644,6 +644,11 @@ func (backend *Backend) Testing() bool {
 	return backend.testing
 }
 
+// Regtest returns whether this backend is running in regtest mode.
+func (backend *Backend) Regtest() bool {
+	return backend.arguments.Regtest()
+}
+
 // Accounts returns the current accounts of the backend.
 func (backend *Backend) Accounts() AccountsList {
 	defer backend.accountsAndKeystoreLock.RLock()()

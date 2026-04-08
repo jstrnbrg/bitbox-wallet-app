@@ -10,6 +10,7 @@ type AppContextProps = {
   guideExists: boolean;
   hideAmounts: boolean;
   isTesting: boolean;
+  isRegtest: boolean;
   isDevServers: boolean;
   isOnline?: boolean;
   nativeLocale: string;

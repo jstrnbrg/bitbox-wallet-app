@@ -6,7 +6,7 @@ import { AppContext } from './AppContext';
 import { useLoad } from '@/hooks/api';
 import { useDefault } from '@/hooks/default';
 import { getNativeLocale } from '@/api/nativelocale';
-import { getDevServers, getTesting } from '@/api/backend';
+import { getDevServers, getRegtestStatus, getTesting } from '@/api/backend';
 import { getOnline, subscribeOnline } from '@/api/online';
 import { i18nextFormat } from '@/i18n/utils';
 import type { TChartDisplay } from './AppContext';
@@ -21,6 +21,8 @@ type TProps = {
 export const AppProvider = ({ children }: TProps) => {
   const nativeLocale = i18nextFormat(useDefault(useLoad(getNativeLocale), 'de-CH'));
   const isTesting = useDefault(useLoad(getTesting), false);
+  const regtestStatus = useDefault(useLoad(getRegtestStatus), { active: false, ready: false });
+  const isRegtest = regtestStatus.active;
   const isOnline = useSync(getOnline, subscribeOnline);
   const isDevServers = useDefault(useLoad(getDevServers), false);
   const [guideShown, setGuideShown] = useState(false);
@@ -77,6 +79,7 @@ export const AppProvider = ({ children }: TProps) => {
         guideExists,
         hideAmounts,
         isTesting,
+        isRegtest,
         isDevServers,
         isOnline,
         nativeLocale,
