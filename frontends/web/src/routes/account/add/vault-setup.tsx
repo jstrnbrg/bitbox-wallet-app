@@ -9,7 +9,6 @@ import {
   enrollVaultSetupSigner,
   getAccounts,
   getVaultSetupDraft,
-  getVaultSetupRecoveryFile,
   importVault,
   NativeCoinCode,
   startVaultSetup,
@@ -47,7 +46,6 @@ export const VaultSetup = () => {
   const nameFromParams = searchParams.get('name');
   const mode = coinCode ? 'create' : 'import';
   const [draft, setDraft] = useState<TVaultDraft>();
-  const [recoveryFile, setRecoveryFile] = useState<TVaultRecoveryFile>();
   const [accountName, setAccountName] = useState(nameFromParams || getDefaultVaultName(coinCode));
   const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false);
   const [importName, setImportName] = useState(getDefaultVaultName(coinCode));
@@ -111,24 +109,6 @@ export const VaultSetup = () => {
       })
       .finally(() => setBusy(false));
   }, [draftId, t]);
-
-  useEffect(() => {
-    if (!draft || draft.state === 'collectingSigners') {
-      return;
-    }
-    getVaultSetupRecoveryFile(draft.id)
-      .then(result => {
-        if (!result.success) {
-          setErrorMessage(result.errorMessage);
-          return;
-        }
-        setRecoveryFile(result.recoveryFile);
-      })
-      .catch(error => {
-        console.error(error);
-        setErrorMessage(t('genericError'));
-      });
-  }, [draft, t]);
 
   const handleEnrollSigner = async () => {
     if (!draft) {
@@ -258,20 +238,6 @@ export const VaultSetup = () => {
     }
   };
 
-  const handleDownloadWalletDescriptor = () => {
-    if (!recoveryFile) {
-      return;
-    }
-    const json = JSON.stringify(recoveryFile, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${recoveryFile.network}-vault-descriptor-${recoveryFile.policyId}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <GuideWrapper>
       <GuidedContent>
@@ -325,7 +291,13 @@ export const VaultSetup = () => {
                   <>
                     <p className={styles.sectionTitle}>{t('addAccount.vault.whatIsDescriptor')}</p>
                     <p className={styles.description}>
-                      {t('addAccount.vault.whatIsDescriptorDescription')}
+                      {t('addAccount.vault.whatIsDescriptorDescription1')}
+                    </p>
+                    <p className={styles.description}>
+                      {t('addAccount.vault.whatIsDescriptorDescription2')}
+                    </p>
+                    <p className={styles.description}>
+                      {t('addAccount.vault.whatIsDescriptorDescription3')}
                     </p>
                     <p className={styles.sectionTitle}>{t('addAccount.vault.onChainBackup')}</p>
                     <div className={styles.descriptorSection}>
@@ -340,19 +312,6 @@ export const VaultSetup = () => {
                         {t('addAccount.vault.onChainBackupAcknowledgement')}
                       </Checkbox>
                     </div>
-                    {recoveryFile && (
-                      <>
-                        <p className={styles.sectionTitle}>{t('addAccount.vault.walletDescriptorAdditional')}</p>
-                        <div className={styles.descriptorSection}>
-                          <p className={styles.description}>
-                            {t('addAccount.vault.walletDescriptorIntro')}
-                          </p>
-                          <Button disabled={busy} onClick={handleDownloadWalletDescriptor} secondary>
-                            {t('addAccount.vault.downloadDescriptor')}
-                          </Button>
-                        </div>
-                      </>
-                    )}
                   </>
                 ) : mode === 'import' ? (
                   <>

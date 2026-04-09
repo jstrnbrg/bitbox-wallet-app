@@ -184,7 +184,9 @@
       "onChainBackupCost": "The on-chain backup requires a one-time Bitcoin transaction of approximately 4,000 sats. This permanently stores the encrypted descriptor on the blockchain.",
       "walletDescriptorAdditional": "Optional: Download wallet descriptor file",
       "whatIsDescriptor": "What is a wallet descriptor?",
-      "whatIsDescriptorDescription": "A wallet descriptor contains all the information needed to reconstruct your multisig wallet, including the public keys and the spending policy. It does not contain private keys, but it is privacy-sensitive. Without a wallet descriptor, you cannot recover your multisig vault if you only have two out of three hardware wallets. To make sure you can never lose your wallet descriptor and two out of three hardware wallets are enough to recover your wallet, we built a descriptor backup solution that stores your encrypted wallet descriptor on the Bitcoin blockchain.",
+      "whatIsDescriptorDescription1": "A wallet descriptor contains all the information needed to reconstruct your multisig wallet, including the public keys and the spending policy. It does not contain private keys, but it is privacy-sensitive.",
+      "whatIsDescriptorDescription2": "Without a wallet descriptor, you cannot recover your multisig vault if you only have two out of three hardware wallets.",
+      "whatIsDescriptorDescription3": "To make sure you can never lose your wallet descriptor and two out of three hardware wallets are enough to recover your wallet, we built a descriptor backup solution that stores your encrypted wallet descriptor on the Bitcoin blockchain.",
       "title": "Bitcoin Vault"
     }
   },
