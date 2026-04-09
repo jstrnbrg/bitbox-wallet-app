@@ -55,13 +55,20 @@ export const ReceiverAddressInput = ({
   const [activeScanQR, setActiveScanQR] = useState(false);
   const accountCode = account?.code;
 
-  const accountsForReceiverDropdown = useMemo(() =>
-    activeAccounts?.filter(acc =>
+  const accountsForReceiverDropdown = useMemo(() => {
+    if (!activeAccounts || !account) {
+      return [];
+    }
+    // For vault accounts, include accounts belonging to any participant's keystore.
+    const participantFingerprints = account.participants?.map(p => p.rootFingerprint) || [];
+    return activeAccounts.filter(acc =>
       isBitcoinBased(acc.coinCode) &&
-      acc.coinCode === account?.coinCode &&
+      acc.coinCode === account.coinCode &&
       acc.active &&
-      acc.keystore.rootFingerprint === account?.keystore.rootFingerprint
-    ) || [], [activeAccounts, account]);
+      (acc.keystore.rootFingerprint === account.keystore.rootFingerprint ||
+        participantFingerprints.includes(acc.keystore.rootFingerprint))
+    );
+  }, [activeAccounts, account]);
 
   const isMobileSnapshotRef = useRef<boolean>(isMobile);
   const parseQRResultRef = useRef(parseQRResult);
