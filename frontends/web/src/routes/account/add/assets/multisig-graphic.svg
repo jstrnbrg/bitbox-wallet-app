@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 500" fill="none">
+  <!-- Key icon reusable: circle head + shaft + teeth, centered at origin -->
+
+  <!-- Key 1 - top center -->
+  <circle cx="200" cy="65" r="45" fill="#9eadb5"/>
+  <g transform="translate(200,65)">
+    <circle cx="0" cy="-8" r="10" fill="none" stroke="#fff" stroke-width="4"/>
+    <rect x="-4" y="0" width="8" height="22" rx="2" fill="#fff"/>
+    <rect x="4" y="8" width="8" height="4" rx="1" fill="#fff"/>
+    <rect x="4" y="16" width="6" height="4" rx="1" fill="#fff"/>
+  </g>
+  <text x="200" y="135" text-anchor="middle" font-family="sans-serif" font-size="18" font-weight="700" fill="#2d3e47">Key 1</text>
+
+  <!-- Dashed line from Key 1 to vault -->
+  <line x1="200" y1="150" x2="200" y2="200" stroke="#9eadb5" stroke-width="3" stroke-dasharray="8 6"/>
+  <polygon points="193,198 200,210 207,198" fill="#9eadb5"/>
+
+  <!-- Vault / Safe -->
+  <g transform="translate(200,300)">
+    <!-- Shadow -->
+    <rect x="-78" y="-72" width="156" height="156" rx="16" fill="#2d3e47"/>
+    <!-- Safe body -->
+    <rect x="-72" y="-78" width="156" height="156" rx="16" fill="#3d5159"/>
+    <!-- Safe door -->
+    <rect x="-55" y="-62" width="120" height="124" rx="8" fill="#fff" stroke="#d0d8dc" stroke-width="3"/>
+    <!-- Handle left -->
+    <rect x="-62" y="-20" width="10" height="40" rx="3" fill="#d0d8dc"/>
+    <rect x="-66" y="-24" width="18" height="8" rx="3" fill="#b8c4ca"/>
+    <rect x="-66" y="16" width="18" height="8" rx="3" fill="#b8c4ca"/>
+    <!-- Keyhole -->
+    <circle cx="5" cy="-10" r="14" fill="#3d5159"/>
+    <rect x="1" y="0" width="8" height="20" rx="2" fill="#3d5159"/>
+    <!-- Feet -->
+    <rect x="-65" y="78" width="20" height="10" rx="3" fill="#2d3e47"/>
+    <rect x="55" y="78" width="20" height="10" rx="3" fill="#2d3e47"/>
+  </g>
+  <text x="200" y="410" text-anchor="middle" font-family="sans-serif" font-size="18" font-weight="700" fill="#2d3e47">Multisig Wallet</text>
+  <text x="200" y="438" text-anchor="middle" font-family="sans-serif" font-size="16" fill="#5a6a72">Requires</text>
+  <text x="200" y="458" text-anchor="middle" font-family="sans-serif" font-size="16" fill="#5a6a72">2 of 3</text>
+  <text x="200" y="478" text-anchor="middle" font-family="sans-serif" font-size="16" fill="#5a6a72">to open.</text>
+
+  <!-- Dashed line from vault to Key 2 -->
+  <line x1="135" y1="340" x2="80" y2="380" stroke="#9eadb5" stroke-width="3" stroke-dasharray="8 6"/>
+  <polygon points="72,375 75,390 87,380" fill="#9eadb5"/>
+
+  <!-- Key 2 - bottom left -->
+  <circle cx="60" cy="415" r="45" fill="#9eadb5"/>
+  <g transform="translate(60,415) rotate(-30)">
+    <circle cx="0" cy="-8" r="10" fill="none" stroke="#fff" stroke-width="4"/>
+    <rect x="-4" y="0" width="8" height="22" rx="2" fill="#fff"/>
+    <rect x="4" y="8" width="8" height="4" rx="1" fill="#fff"/>
+    <rect x="4" y="16" width="6" height="4" rx="1" fill="#fff"/>
+  </g>
+  <text x="60" y="485" text-anchor="middle" font-family="sans-serif" font-size="18" font-weight="700" fill="#2d3e47">Key 2</text>
+
+  <!-- Dashed line from vault to Key 3 -->
+  <line x1="265" y1="340" x2="320" y2="380" stroke="#9eadb5" stroke-width="3" stroke-dasharray="8 6"/>
+  <polygon points="313,380 325,390 328,375" fill="#9eadb5"/>
+
+  <!-- Key 3 - bottom right -->
+  <circle cx="340" cy="415" r="45" fill="#9eadb5"/>
+  <g transform="translate(340,415) rotate(30)">
+    <circle cx="0" cy="-8" r="10" fill="none" stroke="#fff" stroke-width="4"/>
+    <rect x="-4" y="0" width="8" height="22" rx="2" fill="#fff"/>
+    <rect x="4" y="8" width="8" height="4" rx="1" fill="#fff"/>
+    <rect x="4" y="16" width="6" height="4" rx="1" fill="#fff"/>
+  </g>
+  <text x="340" y="485" text-anchor="middle" font-family="sans-serif" font-size="18" font-weight="700" fill="#2d3e47">Key 3</text>
+</svg>

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { TCoin, getSupportedCoins } from '@/api/backend';
 import { subscribeKeystores } from '@/api/keystores';
@@ -143,9 +143,11 @@ type TAddAccountProps = {
 export const AddAccount = ({ accounts }: TAddAccountProps) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const preselectedType = searchParams.get('type') as TAccountTypeSelection | null;
   const [accountCode, setAccountCode] = useState<string>();
   const [accountName, setAccountName] = useState('');
-  const [accountType, setAccountType] = useState<TAccountTypeSelection>('standard');
+  const [accountType, setAccountType] = useState<TAccountTypeSelection>(preselectedType || 'standard');
   const [coinCode, setCoinCode] = useState<'choose' | CoinCode>('choose');
   const [errorMessage, setErrorMessage] = useState<string>();
   const [step, setStep] = useState<TStep>('select-coin');
@@ -174,6 +176,19 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
       setStep('loading');
       const coins = await getSupportedCoins();
       setSupportedCoins(coins);
+
+      // When vault is preselected via URL param, find the first BTC coin and skip to name.
+      if (preselectedType === 'vault') {
+        const btcCoin = coins.find(c => c.accountTypes.includes('vault'));
+        if (btcCoin) {
+          setCoinCode(btcCoin.coinCode);
+          setAccountName(btcCoin.suggestedAccountName);
+          setAccountType('vault');
+          setStep('choose-name');
+          return;
+        }
+      }
+
       const onlyOneCoinIsSupported = (coins.length === 1);
       const firstCoin = coins[0];
       if (!firstCoin) {
@@ -191,7 +206,7 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
     } catch (err) {
       console.error(err);
     }
-  }, [nextStepAfterCoinSelection]);
+  }, [nextStepAfterCoinSelection, preselectedType]);
 
   useEffect(() => {
     startProcess();
