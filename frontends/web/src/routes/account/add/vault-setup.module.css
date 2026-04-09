@@ -4,12 +4,6 @@
     gap: var(--space-default);
 }
 
-.lead {
-    color: var(--color-default);
-    font-size: var(--size-large);
-    margin: 0;
-}
-
 .description {
     color: var(--color-secondary);
     margin: 0;
@@ -26,14 +20,15 @@
     gap: var(--space-half);
 }
 
-.participants {
+.deviceTable {
     display: flex;
     flex-direction: column;
     gap: var(--space-half);
 }
 
-.participant {
+.deviceSlot {
     background: var(--background-secondary);
+    border: 1px dashed var(--color-light);
     border-radius: var(--radius-default);
     display: flex;
     flex-direction: column;
@@ -41,14 +36,34 @@
     padding: var(--space-half);
 }
 
-.participant code {
+.deviceSlotFilled {
+    border-style: solid;
+    border-color: var(--color-success);
+}
+
+.deviceSlotNumber {
+    font-weight: 600;
+}
+
+.deviceSlotEmpty {
+    color: var(--color-light);
+    font-style: italic;
+}
+
+.deviceFingerprint {
+    font-size: var(--size-small);
+    color: var(--color-secondary);
+}
+
+.deviceKeypath {
     font-family: var(--font-family-monospace);
     font-size: var(--size-small);
+    color: var(--color-secondary);
 }
 
 .sectionTitle {
     color: var(--color-default);
-    font-size: var(--size-large);
+    font-weight: 600;
     margin: 0;
 }
 

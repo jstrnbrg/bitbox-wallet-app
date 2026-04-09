@@ -8,7 +8,7 @@ import { syncdone } from '@/api/accountsync';
 import { convertToCurrency, convertFromCurrency } from '@/api/coins';
 import { connectKeystore } from '@/api/keystores';
 import { BackButton } from '@/components/backbutton/backbutton';
-import { Button } from '@/components/forms';
+import { Button, Select } from '@/components/forms';
 import { Column, ColumnButtons, GuidedContent, GuideWrapper, Header, Main, ResponsiveGrid } from '@/components/layout';
 import { Message } from '@/components/message/message';
 import { View, ViewContent } from '@/components/view/view';
@@ -244,10 +244,6 @@ export const FundVault = ({ account, activeAccounts }: TProps) => {
           </Header>
           <View>
             <ViewContent>
-              <Message type="info">
-                {t('account.vault.fund.explanation')}
-              </Message>
-
               {eligibleAccounts === undefined ? (
                 <p>{t('loading')}</p>
               ) : !hasEligibleAccounts ? (
@@ -264,32 +260,33 @@ export const FundVault = ({ account, activeAccounts }: TProps) => {
               ) : (
                 <>
                   <div className={style.sendHeader}>
-                    {sourceBalance && (
-                      <div className={style.availableBalance}>
-                        <Balance balance={sourceBalance} />
-                      </div>
-                    )}
-                    {eligibleAccounts.length === 1 ? (
+                    {eligibleAccounts.length === 1 && (
                       <SubTitle className={style.subTitle}>
                         {t('account.vault.fund.fundingFrom', { name: eligibleAccounts[0]?.name })}
-                      </SubTitle>
-                    ) : (
-                      <SubTitle className={style.subTitle}>
-                        {t('account.vault.fund.sourceLabel')}
                       </SubTitle>
                     )}
                   </div>
 
                   {eligibleAccounts.length > 1 && (
-                    <select
+                    <Select
+                      id="vault-fund-source"
+                      label={t('account.vault.fund.sourceLabel')}
                       value={selectedSourceCode}
                       onChange={(e) => setSelectedSourceCode(e.target.value)}
-                      style={{ width: '100%', marginBottom: 'var(--space-default)' }}>
-                      <option value="">{t('account.vault.fund.selectSource')}</option>
-                      {eligibleAccounts.map(acct => (
-                        <option key={acct.code} value={acct.code}>{acct.name}</option>
-                      ))}
-                    </select>
+                      options={[
+                        { value: '', text: t('account.vault.fund.selectSource'), disabled: true },
+                        ...eligibleAccounts.map(acct => ({
+                          value: acct.code,
+                          text: acct.name,
+                        })),
+                      ]}
+                    />
+                  )}
+
+                  {sourceBalance && (
+                    <div className={style.availableBalance}>
+                      <Balance balance={sourceBalance} />
+                    </div>
                   )}
 
                   {showSendForm && (
@@ -360,6 +357,9 @@ export const FundVault = ({ account, activeAccounts }: TProps) => {
                       </Column>
                     </ResponsiveGrid>
                   )}
+                  <Message type="info">
+                    {t('account.vault.fund.explanation')}
+                  </Message>
                 </>
               )}
 

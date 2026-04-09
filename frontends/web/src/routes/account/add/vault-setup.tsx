@@ -54,6 +54,8 @@ export const VaultSetup = () => {
   const [importRecoveryFile, setImportRecoveryFile] = useState<TVaultRecoveryFile>();
   const [importFileName, setImportFileName] = useState<string>();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [step, setStep] = useState<'devices' | 'backup'>('devices');
+  const startedRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>();
 
@@ -66,6 +68,28 @@ export const VaultSetup = () => {
       return t(`error.${errorCode}`);
     }
   };
+
+  // Auto-start vault creation when in create mode without an existing draft.
+  useEffect(() => {
+    if (draftId || mode !== 'create' || !coinCode || startedRef.current) {
+      return;
+    }
+    startedRef.current = true;
+    setBusy(true);
+    startVaultSetup(coinCode, accountName || undefined)
+      .then(result => {
+        if (!result.success) {
+          setErrorMessage(result.errorMessage || t('genericError'));
+          return;
+        }
+        navigate(`/add-account/vault/${result.draft.id}`, { replace: true });
+      })
+      .catch(error => {
+        console.error(error);
+        setErrorMessage(t('genericError'));
+      })
+      .finally(() => setBusy(false));
+  }, [draftId, mode, coinCode, accountName, navigate, t]);
 
   useEffect(() => {
     if (!draftId) {
@@ -105,27 +129,6 @@ export const VaultSetup = () => {
         setErrorMessage(t('genericError'));
       });
   }, [draft, t]);
-
-  const handleStart = async () => {
-    if (!coinCode) {
-      setErrorMessage(t('addAccount.vault.invalidCoin'));
-      return;
-    }
-    setBusy(true);
-    try {
-      const result = await startVaultSetup(coinCode, accountName || undefined);
-      if (!result.success) {
-        setErrorMessage(result.errorMessage || t('genericError'));
-        return;
-      }
-      navigate(`/add-account/vault/${result.draft.id}`);
-    } catch (error) {
-      console.error(error);
-      setErrorMessage(t('genericError'));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const handleEnrollSigner = async () => {
     if (!draft) {
@@ -273,145 +276,148 @@ export const VaultSetup = () => {
     <GuideWrapper>
       <GuidedContent>
         <Main>
-          <Header title={<h2>{t('addAccount.vault.setup', { name: accountName || t('addAccount.vault.title') })}</h2>} />
-          <View fitContent width="var(--content-width-small)">
+          <Header title={<h2>{step === 'backup' ? t('addAccount.vault.backupTitle') : t('addAccount.vault.setup')}</h2>} />
+          <View>
             <ViewContent>
               <div className={styles.content}>
                 <Message type="warning" hidden={!errorMessage}>
                   {errorMessage}
                 </Message>
-                {draft ? (
+                {draft && step === 'devices' ? (
                   <>
-                    <p className={styles.lead}>
+                    <p className={styles.description}>
+                      {t('addAccount.vault.collectingDescription')}
+                    </p>
+                    <p className={styles.description}>
                       {t('addAccount.vault.progress', {
                         count: draft.participants.length,
                       })}
                     </p>
-                    <div className={styles.participants}>
-                      {draft.participants.map((participant, index) => (
-                        <div className={styles.participant} key={`${participant.keyInfo.rootFingerprint}-${index}`}>
-                          <strong>
-                            {participant.name || t('addAccount.vault.signerLabel', {
-                              number: index + 1,
-                            })}
-                          </strong>
-                          <span>{participant.keyInfo.rootFingerprint}</span>
-                          <code>{participant.keyInfo.keypath}</code>
-                        </div>
-                      ))}
+                    <div className={styles.deviceTable}>
+                      {Array.from({ length: 3 }).map((_, index) => {
+                        const participant = draft.participants[index];
+                        return (
+                          <div
+                            className={[styles.deviceSlot, participant && styles.deviceSlotFilled].filter(Boolean).join(' ')}
+                            key={index}>
+                            <span className={styles.deviceSlotNumber}>
+                              {t('addAccount.vault.signerLabel', { number: index + 1 })}
+                            </span>
+                            {participant ? (
+                              <>
+                                {participant.name && (
+                                  <strong>{participant.name}</strong>
+                                )}
+                                <span className={styles.deviceFingerprint}>{participant.keyInfo.rootFingerprint}</span>
+                                <code className={styles.deviceKeypath}>{participant.keyInfo.keypath}</code>
+                              </>
+                            ) : (
+                              <span className={styles.deviceSlotEmpty}>
+                                {t('addAccount.vault.notAdded')}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                    {draft.state === 'collectingSigners' ? (
+                  </>
+                ) : draft ? (
+                  <>
+                    <p className={styles.sectionTitle}>{t('addAccount.vault.whatIsDescriptor')}</p>
+                    <p className={styles.description}>
+                      {t('addAccount.vault.whatIsDescriptorDescription')}
+                    </p>
+                    <p className={styles.sectionTitle}>{t('addAccount.vault.onChainBackup')}</p>
+                    <div className={styles.descriptorSection}>
                       <p className={styles.description}>
-                        {t('addAccount.vault.collectingDescription')}
+                        {t('addAccount.vault.onChainBackupAutoDescription')}
                       </p>
-                    ) : (
+                      <Checkbox
+                        checked={recoveryAcknowledged}
+                        id="vault-recovery-ack"
+                        onChange={event => setRecoveryAcknowledged(event.target.checked)}
+                        title={t('addAccount.vault.onChainBackupAcknowledgement')}>
+                        {t('addAccount.vault.onChainBackupAcknowledgement')}
+                      </Checkbox>
+                    </div>
+                    {recoveryFile && (
                       <>
-                        <h3 className={styles.sectionTitle}>{t('addAccount.vault.onChainBackup')}</h3>
+                        <p className={styles.sectionTitle}>{t('addAccount.vault.walletDescriptorAdditional')}</p>
                         <div className={styles.descriptorSection}>
                           <p className={styles.description}>
-                            {t('addAccount.vault.onChainBackupAutoDescription')}
+                            {t('addAccount.vault.walletDescriptorIntro')}
                           </p>
-                          <Checkbox
-                            checked={recoveryAcknowledged}
-                            id="vault-recovery-ack"
-                            onChange={event => setRecoveryAcknowledged(event.target.checked)}
-                            title={t('addAccount.vault.onChainBackupAcknowledgement')}>
-                            {t('addAccount.vault.onChainBackupAcknowledgement')}
-                          </Checkbox>
+                          <Button disabled={busy} onClick={handleDownloadWalletDescriptor} secondary>
+                            {t('addAccount.vault.downloadDescriptor')}
+                          </Button>
                         </div>
-                        {recoveryFile && (
-                          <>
-                            <h3 className={styles.sectionTitle}>{t('addAccount.vault.walletDescriptorAdditional')}</h3>
-                            <div className={styles.descriptorSection}>
-                              <p className={styles.description}>
-                                {t('addAccount.vault.walletDescriptorIntro')}
-                              </p>
-                              <Button disabled={busy} onClick={handleDownloadWalletDescriptor} secondary>
-                                {t('addAccount.vault.downloadDescriptor')}
-                              </Button>
-                            </div>
-                          </>
-                        )}
                       </>
                     )}
                   </>
-                ) : (
+                ) : mode === 'import' ? (
                   <>
-                    {mode === 'create' ? (
-                      <>
-                        <p className={styles.lead}>{t('addAccount.vault.policy')}</p>
-                        <p className={styles.description}>
-                          {t('addAccount.vault.createDescription')}
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <p className={styles.description}>
-                          {t('addAccount.vault.importDescription')}
-                        </p>
-                        <input
-                          accept=".json,application/json"
-                          className={styles.fileInput}
-                          onChange={handleImportFile}
-                          ref={fileInputRef}
-                          type="file"
-                        />
-                        <Button
-                          disabled={busy}
-                          onClick={() => fileInputRef.current?.click()}
-                          secondary>
-                          {t('addAccount.vault.selectFile')}
-                        </Button>
-                        {importFileName && (
-                          <p className={styles.selectedFile}>
-                            {importFileName}
-                          </p>
-                        )}
-                        <Input
-                          id="vault-import-name"
-                          onInput={event => setImportName(event.currentTarget.value)}
-                          value={importName}
-                        />
-                      </>
+                    <p className={styles.description}>
+                      {t('addAccount.vault.importDescription')}
+                    </p>
+                    <input
+                      accept=".json,application/json"
+                      className={styles.fileInput}
+                      onChange={handleImportFile}
+                      ref={fileInputRef}
+                      type="file"
+                    />
+                    <Button
+                      disabled={busy}
+                      onClick={() => fileInputRef.current?.click()}
+                      secondary>
+                      {t('addAccount.vault.selectFile')}
+                    </Button>
+                    {importFileName && (
+                      <p className={styles.selectedFile}>
+                        {importFileName}
+                      </p>
                     )}
+                    <Input
+                      id="vault-import-name"
+                      onInput={event => setImportName(event.currentTarget.value)}
+                      value={importName}
+                    />
                   </>
-                )}
+                ) : null}
               </div>
             </ViewContent>
             <ViewButtons>
               {draft ? (
                 <>
-                  {draft.state === 'collectingSigners' ? (
-                    <Button primary disabled={busy} onClick={handleEnrollSigner}>
-                      {t('addAccount.vault.enrollSigner')}
-                    </Button>
-                  ) : (
-                    <>
-                      <Button primary disabled={busy || !recoveryAcknowledged} onClick={handleComplete}>
-                        {t('addAccount.vault.complete')}
+                  {step === 'devices' ? (
+                    draft.state === 'collectingSigners' ? (
+                      <Button primary disabled={busy} onClick={handleEnrollSigner}>
+                        {t('addAccount.vault.enrollSigner')}
                       </Button>
-                    </>
+                    ) : (
+                      <Button primary onClick={() => setStep('backup')}>
+                        {t('button.continue')}
+                      </Button>
+                    )
+                  ) : (
+                    <Button primary disabled={busy || !recoveryAcknowledged} onClick={handleComplete}>
+                      {t('addAccount.vault.complete')}
+                    </Button>
                   )}
-                  <Button onClick={handleDiscard} secondary>
-                    {t('addAccount.vault.discard')}
+                  <Button onClick={step === 'backup' ? () => setStep('devices') : handleDiscard} secondary>
+                    {step === 'backup' ? t('button.back') : t('addAccount.vault.discard')}
                   </Button>
                 </>
-              ) : (
+              ) : mode === 'import' ? (
                 <>
-                  {mode === 'create' ? (
-                    <Button primary disabled={busy} onClick={handleStart}>
-                      {t('addAccount.vault.create')}
-                    </Button>
-                  ) : (
-                    <Button primary disabled={busy || !importRecoveryFile || !importName} onClick={handleImport}>
-                      {t('addAccount.vault.import')}
-                    </Button>
-                  )}
+                  <Button primary disabled={busy || !importRecoveryFile || !importName} onClick={handleImport}>
+                    {t('addAccount.vault.import')}
+                  </Button>
                   <BackButton enableEsc>
                     {t('button.back')}
                   </BackButton>
                 </>
-              )}
+              ) : null}
             </ViewButtons>
           </View>
         </Main>
