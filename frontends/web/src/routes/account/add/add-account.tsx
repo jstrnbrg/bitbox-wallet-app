@@ -162,9 +162,12 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
     return !!coin?.accountTypes.includes('vault');
   }, []);
 
-  const nextStepAfterCoinSelection = useCallback((_coin?: TCoin): TStep => {
+  const nextStepAfterCoinSelection = useCallback((coin?: TCoin): TStep => {
+    if (requiresAccountTypeSelection(coin)) {
+      return 'select-account-type';
+    }
     return 'choose-name';
-  }, []);
+  }, [requiresAccountTypeSelection]);
 
   const startProcess = useCallback(async () => {
     try {
@@ -205,7 +208,7 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
     case 'select-coin':
       navigate(-1);
       break;
-    case 'choose-name':
+    case 'select-account-type':
       if (onlyOneSupportedCoin()) {
         navigate(-1);
       } else {
@@ -213,8 +216,15 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
         setErrorMessage(undefined);
       }
       break;
-    case 'select-account-type':
-      setStep('choose-name');
+    case 'choose-name':
+      if (requiresAccountTypeSelection(selectedCoin)) {
+        setStep('select-account-type');
+      } else if (onlyOneSupportedCoin()) {
+        navigate(-1);
+      } else {
+        setStep('select-coin');
+        setErrorMessage(undefined);
+      }
       break;
     case 'success':
       setStep('choose-name');
@@ -228,42 +238,28 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
     case 'select-coin':
       setStep(nextStepAfterCoinSelection(selectedCoin));
       break;
-    case 'choose-name':
-      if (requiresAccountTypeSelection(selectedCoin)) {
-        setStep('select-account-type');
-      } else {
-        setAdding(true);
-        const responseData: TAddAccount = await addAccount(coinCode, accountName);
-        setAdding(false);
-        if (responseData.success) {
-          setAccountCode(responseData.accountCode);
-          setErrorMessage(undefined);
-          setStep('success');
-        } else if (responseData.errorCode) {
-          setErrorMessage(t(`error.${responseData.errorCode}`));
-        } else if (responseData.errorMessage) {
-          setErrorMessage(t('unknownError', { errorMessage: responseData.errorMessage }));
-        }
-      }
-      break;
     case 'select-account-type':
+      setStep('choose-name');
+      break;
+    case 'choose-name': {
       if (accountType === 'vault') {
         navigate(`/add-account/vault?coinCode=${coinCode}&name=${encodeURIComponent(accountName)}`);
-      } else {
-        setAdding(true);
-        const stdResponse: TAddAccount = await addAccount(coinCode, accountName);
-        setAdding(false);
-        if (stdResponse.success) {
-          setAccountCode(stdResponse.accountCode);
-          setErrorMessage(undefined);
-          setStep('success');
-        } else if (stdResponse.errorCode) {
-          setErrorMessage(t(`error.${stdResponse.errorCode}`));
-        } else if (stdResponse.errorMessage) {
-          setErrorMessage(t('unknownError', { errorMessage: stdResponse.errorMessage }));
-        }
+        break;
+      }
+      setAdding(true);
+      const responseData: TAddAccount = await addAccount(coinCode, accountName);
+      setAdding(false);
+      if (responseData.success) {
+        setAccountCode(responseData.accountCode);
+        setErrorMessage(undefined);
+        setStep('success');
+      } else if (responseData.errorCode) {
+        setErrorMessage(t(`error.${responseData.errorCode}`));
+      } else if (responseData.errorMessage) {
+        setErrorMessage(t('unknownError', { errorMessage: responseData.errorMessage }));
       }
       break;
+    }
     case 'success':
       if (accountCode) {
         navigate(`/account/${accountCode}`);
@@ -314,8 +310,8 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
 
   const currentStep = [
     ...(!onlyOneSupportedCoin() ? ['select-coin'] : []),
-    'choose-name',
     ...(requiresAccountTypeSelection(selectedCoin) ? ['select-account-type'] : []),
+    'choose-name',
     'success'
   ].indexOf(step);
 
@@ -371,13 +367,13 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
                       <Step key="select-coin" hidden={onlyOneSupportedCoin()}>
                         {t('addAccount.selectCoin.step')}
                       </Step>
-                      <Step key="choose-name">
-                        {t('addAccount.chooseName.step')}
-                      </Step>
                       <Step
                         key="select-account-type"
                         hidden={!requiresAccountTypeSelection(selectedCoin)}>
                         {t('addAccount.selectAccountType.step')}
+                      </Step>
+                      <Step key="choose-name">
+                        {t('addAccount.chooseName.step')}
                       </Step>
                       <Step key="success">
                         {t('addAccount.success.step')}

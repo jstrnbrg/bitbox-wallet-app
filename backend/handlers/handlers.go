@@ -70,6 +70,7 @@ type Backend interface {
 	AccountsByKeystore() (backend.KeystoresAccountsListMap, error)
 	AccountsFiatAndCoinBalance(backend.AccountsList, string) (*big.Rat, map[coinpkg.Code]*big.Int, error)
 	Keystore() keystore.Keystore
+	Keystores() []keystore.Keystore
 	KeystoreForFingerprint(fingerprint []byte) keystore.Keystore
 	AccountsBalanceSummary() (*backend.AccountsBalanceSummary, error)
 	OnAccountInit(f func(accounts.Interface))
@@ -1395,7 +1396,8 @@ func (handlers *Handlers) getChartData(*http.Request) interface{} {
 }
 
 // getSupportedCoinsHandler returns an array of coin codes for which you can add an account.
-// Exactly one keystore must be connected, otherwise an empty array is returned.
+// Coins are unioned across all connected keystores so that a Multi edition connected alongside
+// a BTC-only edition still shows all coins the Multi edition supports.
 func (handlers *Handlers) getSupportedCoins(*http.Request) interface{} {
 	type element struct {
 		CoinCode             coinpkg.Code `json:"coinCode"`
@@ -1404,17 +1406,41 @@ func (handlers *Handlers) getSupportedCoins(*http.Request) interface{} {
 		SuggestedAccountName string       `json:"suggestedAccountName"`
 		AccountTypes         []string     `json:"accountTypes"`
 	}
-	keystore := handlers.backend.Keystore()
-	if keystore == nil {
+	keystores := handlers.backend.Keystores()
+	if len(keystores) == 0 {
 		return []string{}
 	}
+	// Union supported coins across all connected keystores.
+	coinCodeSeen := map[coinpkg.Code]bool{}
+	var allCoinCodes []coinpkg.Code
+	for _, ks := range keystores {
+		for _, coinCode := range handlers.backend.SupportedCoins(ks) {
+			if !coinCodeSeen[coinCode] {
+				coinCodeSeen[coinCode] = true
+				allCoinCodes = append(allCoinCodes, coinCode)
+			}
+		}
+	}
+	// Use the first keystore that supports each coin for CanAddAccount / suggestedAccountName.
 	var result []element
-	for _, coinCode := range handlers.backend.SupportedCoins(keystore) {
+	for _, coinCode := range allCoinCodes {
 		coin, err := handlers.backend.Coin(coinCode)
 		if err != nil {
 			continue
 		}
-		suggestedAccountName, canAddAccount := handlers.backend.CanAddAccount(coinCode, keystore)
+		var suggestedAccountName string
+		var canAddAccount bool
+		for _, ks := range keystores {
+			name, ok := handlers.backend.CanAddAccount(coinCode, ks)
+			if ok {
+				suggestedAccountName = name
+				canAddAccount = true
+				break
+			}
+			if suggestedAccountName == "" {
+				suggestedAccountName = name
+			}
+		}
 		result = append(result, element{
 			CoinCode:             coinCode,
 			Name:                 coin.Name(),

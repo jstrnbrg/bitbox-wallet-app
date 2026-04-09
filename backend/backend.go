@@ -753,6 +753,16 @@ func (backend *Backend) Keystore() keystore.Keystore {
 	return nil
 }
 
+// Keystores returns all currently registered keystores.
+func (backend *Backend) Keystores() []keystore.Keystore {
+	defer backend.accountsAndKeystoreLock.RLock()()
+	result := make([]keystore.Keystore, 0, len(backend.keystores))
+	for _, ks := range backend.keystores {
+		result = append(result, ks)
+	}
+	return result
+}
+
 // hasKeystores returns true if any keystore is connected.
 // The accountsAndKeystoreLock must be held when calling this function.
 func (backend *Backend) hasKeystores() bool {
