@@ -1749,6 +1749,35 @@
     "verifyBitBox02": "Verify address on BitBox",
     "verifyInstruction": "Please verify that the following address matches the one displayed on your device."
   },
+  "regtestBar": {
+    "buttons": {
+      "mine": "Mine",
+      "mining": "Mining...",
+      "ready": "Ready",
+      "send": "Send 1 BTC",
+      "sending": "Sending...",
+      "sendUnavailable": "Send (N/A for vaults)",
+      "setup": "Setup",
+      "settingUp": "Setting up..."
+    },
+    "errors": {
+      "addressRequired": "A receive address is required.",
+      "invalidRequestBody": "The request could not be processed.",
+      "mineFailed": "Mining failed.",
+      "navigateToAccount": "Open a regtest account first.",
+      "noReceiveAddress": "No receive address is available yet. Wait for the account to sync.",
+      "notInRegtestMode": "Regtest mode is not active.",
+      "sendFailed": "Sending failed.",
+      "setupFailed": "Setup failed.",
+      "setupRequired": "Run setup first."
+    },
+    "feedback": {
+      "mineComplete": "Mined 1 block.",
+      "sendComplete": "Sent 1 BTC to {{address}}...",
+      "setupComplete": "Setup complete."
+    },
+    "title": "Regtest"
+  },
   "reset": {
     "description": "All data will be deleted from this device. That includes your Private Key!",
     "notReset": "Device NOT reset.",

@@ -1022,9 +1022,15 @@ func (handlers *Handlers) getRegtestStatus(*http.Request) interface{} {
 	}
 }
 
+type regtestResponse struct {
+	Success      bool   `json:"success"`
+	ErrorCode    string `json:"errorCode,omitempty"`
+	ErrorMessage string `json:"errorMessage,omitempty"`
+}
+
 func (handlers *Handlers) postRegtestSetup(*http.Request) interface{} {
 	if !handlers.backend.Regtest() {
-		return map[string]interface{}{"success": false, "errorMessage": "not in regtest mode"}
+		return regtestResponse{Success: false, ErrorCode: "notInRegtestMode"}
 	}
 	handlers.regtestMu.Lock()
 	defer handlers.regtestMu.Unlock()
@@ -1036,22 +1042,22 @@ func (handlers *Handlers) postRegtestSetup(*http.Request) interface{} {
 			// Wallet exists on disk but may not be loaded into memory.
 			_, loadErr := runBitcoinCli("", "loadwallet", "testwallet")
 			if loadErr != nil && !strings.Contains(loadErr.Error(), "already loaded") {
-				return map[string]interface{}{"success": false, "errorMessage": loadErr.Error()}
+				return regtestResponse{Success: false, ErrorMessage: loadErr.Error()}
 			}
 		} else {
-			return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+			return regtestResponse{Success: false, ErrorMessage: err.Error()}
 		}
 	}
 
 	addr, err := runBitcoinCli("testwallet", "getnewaddress")
 	if err != nil {
-		return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+		return regtestResponse{Success: false, ErrorMessage: err.Error()}
 	}
 	handlers.regtestAddr = addr
 
 	_, err = runBitcoinCli("", "generatetoaddress", "101", addr)
 	if err != nil {
-		return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+		return regtestResponse{Success: false, ErrorMessage: err.Error()}
 	}
 
 	// Give Electrs time to index the new blocks, then reinitialize accounts so they
@@ -1061,62 +1067,62 @@ func (handlers *Handlers) postRegtestSetup(*http.Request) interface{} {
 		handlers.backend.ReinitializeAccounts()
 	}()
 
-	return map[string]interface{}{"success": true}
+	return regtestResponse{Success: true}
 }
 
 func (handlers *Handlers) postRegtestMine(*http.Request) interface{} {
 	if !handlers.backend.Regtest() {
-		return map[string]interface{}{"success": false, "errorMessage": "not in regtest mode"}
+		return regtestResponse{Success: false, ErrorCode: "notInRegtestMode"}
 	}
 	handlers.regtestMu.Lock()
 	addr := handlers.regtestAddr
 	handlers.regtestMu.Unlock()
 
 	if addr == "" {
-		return map[string]interface{}{"success": false, "errorMessage": "run setup first"}
+		return regtestResponse{Success: false, ErrorCode: "setupRequired"}
 	}
 
 	_, err := runBitcoinCli("", "generatetoaddress", "1", addr)
 	if err != nil {
-		return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+		return regtestResponse{Success: false, ErrorMessage: err.Error()}
 	}
-	return map[string]interface{}{"success": true}
+	return regtestResponse{Success: true}
 }
 
 func (handlers *Handlers) postRegtestSend(r *http.Request) interface{} {
 	if !handlers.backend.Regtest() {
-		return map[string]interface{}{"success": false, "errorMessage": "not in regtest mode"}
+		return regtestResponse{Success: false, ErrorCode: "notInRegtestMode"}
 	}
 	handlers.regtestMu.Lock()
 	addr := handlers.regtestAddr
 	handlers.regtestMu.Unlock()
 
 	if addr == "" {
-		return map[string]interface{}{"success": false, "errorMessage": "run setup first"}
+		return regtestResponse{Success: false, ErrorCode: "setupRequired"}
 	}
 
 	var body struct {
 		Address string `json:"address"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		return map[string]interface{}{"success": false, "errorMessage": "invalid request body"}
+		return regtestResponse{Success: false, ErrorCode: "invalidRequestBody"}
 	}
 	if body.Address == "" {
-		return map[string]interface{}{"success": false, "errorMessage": "address is required"}
+		return regtestResponse{Success: false, ErrorCode: "addressRequired"}
 	}
 
 	_, err := runBitcoinCli("testwallet", "sendtoaddress", body.Address, "1.0")
 	if err != nil {
-		return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+		return regtestResponse{Success: false, ErrorMessage: err.Error()}
 	}
 
 	// Mine a block to confirm the transaction.
 	_, err = runBitcoinCli("", "generatetoaddress", "1", addr)
 	if err != nil {
-		return map[string]interface{}{"success": false, "errorMessage": err.Error()}
+		return regtestResponse{Success: false, ErrorMessage: err.Error()}
 	}
 
-	return map[string]interface{}{"success": true}
+	return regtestResponse{Success: true}
 }
 
 func (handlers *Handlers) getBTCParseExternalAmount(r *http.Request) interface{} {
