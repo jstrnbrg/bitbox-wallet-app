@@ -5,6 +5,7 @@ package backend
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/accounts"
@@ -673,21 +674,23 @@ func (backend *Backend) maybeDiscoverVaults(ks keystore.Keystore) {
 			}
 
 			backend.log.Infof("vault discovery: scanning %s account %d", coinCode, accountNumber)
-			recovery, hasHistory := backend.scanBeaconForVault(bc, coinCode, xpub)
+			recoveries, hasHistory := backend.scanBeaconForVaults(bc, coinCode, xpub)
 			if !hasHistory {
 				backend.log.Infof("vault discovery: no beacon history for %s account %d, stopping", coinCode, accountNumber)
 				break
 			}
-			if recovery == nil {
+			if len(recoveries) == 0 {
 				// Beacon had history but no valid backup — continue to next account number.
 				continue
 			}
 
-			_, importErr := backend.ImportVaultRecovery(recovery, "")
-			if importErr != nil {
-				// errAccountAlreadyExists is expected for vaults we already know about.
-				backend.log.WithError(importErr).Debug("vault discovery: import skipped or failed")
-			} else {
+			for _, recovery := range recoveries {
+				_, importErr := backend.ImportVaultRecovery(recovery, "")
+				if importErr != nil {
+					// errAccountAlreadyExists is expected for vaults we already know about.
+					backend.log.WithError(importErr).Debug("vault discovery: import skipped or failed")
+					continue
+				}
 				backend.log.Infof("vault discovery: auto-discovered vault for %s account %d",
 					coinCode, recovery.AccountNumber)
 			}
@@ -695,14 +698,12 @@ func (backend *Backend) maybeDiscoverVaults(ks keystore.Keystore) {
 	}
 }
 
-// scanBeaconForVault checks a single beacon address for a valid on-chain vault backup.
-// Returns the recovery file if found, nil if no valid backup.
-// hasHistory is true if the beacon address has any transaction history (used for gap limit).
-func (backend *Backend) scanBeaconForVault(
+// scanBeaconForVaults checks a single beacon address for one or more valid on-chain vault backups.
+func (backend *Backend) scanBeaconForVaults(
 	bc blockchain.Interface,
 	coinCode coinpkg.Code,
 	xpub *hdkeychain.ExtendedKey,
-) (recovery *vaults.RecoveryFile, hasHistory bool) {
+) (recoveries []*vaults.RecoveryFile, hasHistory bool) {
 	beacon, err := backup.ComputeBeaconAddress(coinCode, xpub)
 	if err != nil {
 		backend.log.WithError(err).Error("vault discovery: failed to compute beacon")
@@ -740,6 +741,7 @@ func (backend *Backend) scanBeaconForVault(
 		return nil, false
 	}
 
+	recoveryByPolicyID := map[string]*vaults.RecoveryFile{}
 	for _, txInfo := range history {
 		txHash := txInfo.TXHash.Hash()
 		tx, err := bc.TransactionGet(txHash)
@@ -759,7 +761,27 @@ func (backend *Backend) scanBeaconForVault(
 			backend.log.WithError(err).Error("vault discovery: failed to reconstruct recovery file")
 			continue
 		}
-		return rec, true
+		recoveryByPolicyID[rec.PolicyID] = rec
 	}
-	return nil, true
+	recoveries = make([]*vaults.RecoveryFile, 0, len(recoveryByPolicyID))
+	for _, recovery := range recoveryByPolicyID {
+		recoveries = append(recoveries, recovery)
+	}
+	slices.SortFunc(recoveries, func(a, b *vaults.RecoveryFile) int {
+		if a.AccountNumber != b.AccountNumber {
+			if a.AccountNumber < b.AccountNumber {
+				return -1
+			}
+			return 1
+		}
+		switch {
+		case a.PolicyID < b.PolicyID:
+			return -1
+		case a.PolicyID > b.PolicyID:
+			return 1
+		default:
+			return 0
+		}
+	})
+	return recoveries, true
 }

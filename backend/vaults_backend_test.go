@@ -10,13 +10,18 @@ import (
 	"testing"
 	"time"
 
+	blockchainpkg "github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/blockchain"
+	blockchainMock "github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/blockchain/mocks"
 	coinpkg "github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/coin"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/keystore/software"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/signing"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/vaults"
+	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/vaults/backup"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/util/errp"
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,6 +78,46 @@ func descriptorForChain(
 		)
 	}
 	return fmt.Sprintf("wsh(sortedmulti(2,%s))", strings.Join(keys, ","))
+}
+
+func makeVaultBackupPayload(
+	t *testing.T,
+	network coinpkg.Code,
+	accountNumber uint16,
+	participants []signing.BitcoinPolicyParticipant,
+) []byte {
+	t.Helper()
+
+	canonicalParticipants := vaults.CanonicalizeParticipants(participants)
+	var xpubs [3]*hdkeychain.ExtendedKey
+	var rootFingerprints [3][]byte
+	for i, participant := range canonicalParticipants {
+		xpubs[i] = participant.KeyInfo.ExtendedPublicKey
+		rootFingerprints[i] = participant.KeyInfo.RootFingerprint
+	}
+	payload, err := backup.EncryptDescriptor(
+		vaults.AccountDescriptor(canonicalParticipants),
+		network,
+		accountNumber,
+		xpubs,
+		rootFingerprints,
+	)
+	require.NoError(t, err)
+	return payload
+}
+
+func makeVaultBackupTx(t *testing.T, payload []byte) *wire.MsgTx {
+	t.Helper()
+
+	script, err := backup.BuildOPReturnScript(payload)
+	require.NoError(t, err)
+
+	tx := wire.NewMsgTx(2)
+	tx.AddTxOut(&wire.TxOut{
+		Value:    0,
+		PkScript: script,
+	})
+	return tx
 }
 
 func TestVaultSetupLifecycle(t *testing.T) {
@@ -256,4 +301,79 @@ func TestImportVaultRecoveryValidationAndDuplicateProtection(t *testing.T) {
 	_, err = backend.ImportVaultRecovery(recovery, "Duplicate")
 	require.Error(t, err)
 	require.Equal(t, errAccountAlreadyExists, errp.Cause(err))
+}
+
+func TestScanBeaconForVaultsReturnsAllUniqueRecoveries(t *testing.T) {
+	backend := newBackend(t, testnetEnabled, regtestDisabled)
+	defer backend.Close()
+
+	coin, err := backend.Coin(coinpkg.CodeTBTC)
+	require.NoError(t, err)
+
+	sharedSigner := newVaultTestKeystore(t, "shared-signer")
+	participantsA := vaultTestParticipants(t, coin, 0,
+		sharedSigner,
+		newVaultTestKeystore(t, "vault-a-signer-2"),
+		newVaultTestKeystore(t, "vault-a-signer-3"),
+	)
+	participantsB := vaultTestParticipants(t, coin, 0,
+		sharedSigner,
+		newVaultTestKeystore(t, "vault-b-signer-2"),
+		newVaultTestKeystore(t, "vault-b-signer-3"),
+	)
+
+	payloadA := makeVaultBackupPayload(t, coinpkg.CodeTBTC, 0, participantsA)
+	payloadB := makeVaultBackupPayload(t, coinpkg.CodeTBTC, 0, participantsB)
+	txA := makeVaultBackupTx(t, payloadA)
+	txB := makeVaultBackupTx(t, payloadB)
+
+	accountKeypath := vaults.BIP48AccountKeypath(coinpkg.CodeTBTC, 0)
+	sharedXpub, err := sharedSigner.ExtendedPublicKey(coin, accountKeypath)
+	require.NoError(t, err)
+	beacon, err := backup.ComputeBeaconAddress(coinpkg.CodeTBTC, sharedXpub)
+	require.NoError(t, err)
+
+	bc := &blockchainMock.BlockchainMock{
+		MockScriptHashSubscribe: func(setupAndTeardown func() func(), scriptHash blockchainpkg.ScriptHashHex, success func(string)) {
+			require.Equal(t, beacon.ScriptHashHex, scriptHash)
+			teardown := setupAndTeardown()
+			defer teardown()
+			success("ready")
+		},
+		MockScriptHashGetHistory: func(scriptHash blockchainpkg.ScriptHashHex) (blockchainpkg.TxHistory, error) {
+			require.Equal(t, beacon.ScriptHashHex, scriptHash)
+			return blockchainpkg.TxHistory{
+				{Height: 7, TXHash: blockchainpkg.TXHash(txA.TxHash())},
+				{Height: 8, TXHash: blockchainpkg.TXHash(txB.TxHash())},
+			}, nil
+		},
+		MockTransactionGet: func(hash chainhash.Hash) (*wire.MsgTx, error) {
+			switch hash {
+			case txA.TxHash():
+				return txA, nil
+			case txB.TxHash():
+				return txB, nil
+			default:
+				return nil, fmt.Errorf("unexpected tx hash %s", hash)
+			}
+		},
+	}
+
+	recoveries, hasHistory := backend.scanBeaconForVaults(bc, coinpkg.CodeTBTC, sharedXpub)
+	require.True(t, hasHistory)
+	require.Len(t, recoveries, 2)
+	require.ElementsMatch(t, []string{
+		vaults.RecoveryFileFromDraft(&vaults.Draft{
+			Network:        coinpkg.CodeTBTC,
+			AccountNumber:  0,
+			AccountKeypath: accountKeypath,
+			Participants:   participantsA,
+		}).PolicyID,
+		vaults.RecoveryFileFromDraft(&vaults.Draft{
+			Network:        coinpkg.CodeTBTC,
+			AccountNumber:  0,
+			AccountKeypath: accountKeypath,
+			Participants:   participantsB,
+		}).PolicyID,
+	}, []string{recoveries[0].PolicyID, recoveries[1].PolicyID})
 }
