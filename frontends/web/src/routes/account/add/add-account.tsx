@@ -20,7 +20,7 @@ import { AddAccountGuide } from './add-account-guide';
 import { Skeleton } from '@/components/skeleton/skeleton';
 import styles from './add-account.module.css';
 
-type TStep = 'loading' | 'select-coin' | 'select-account-type' | 'choose-name' | 'success';
+type TStep = 'loading' | 'select-coin' | 'select-account-type' | 'choose-keystore' | 'choose-name' | 'success';
 type TAccountTypeSelection = 'standard' | 'vault';
 
 type TAddAccountContentProps = {
@@ -117,6 +117,27 @@ const AddAccountSteps = ({
         </div>
       </div>
     );
+  case 'choose-keystore':
+    return (
+      <>
+        <UseBackButton handler={() => {
+          handleBack();
+          return false;
+        }} />
+        <Select
+          id="keystore"
+          label={t('addAccount.chooseKeystore.label')}
+          onChange={event => onKeystoreChange(event.target.value)}
+          options={standardKeystores.map(({ keystoreName, rootFingerprint }) => ({
+            text: keystoreName && keystoreName !== rootFingerprint ?
+              `${keystoreName} (${rootFingerprint})` :
+              rootFingerprint,
+            value: rootFingerprint,
+          }))}
+          value={selectedRootFingerprint}
+        />
+      </>
+    );
   case 'choose-name':
     return (
       <>
@@ -130,18 +151,6 @@ const AddAccountSteps = ({
           id="accountName"
           onInput={onAccountNameInput}
           value={accountName} />
-        {standardKeystores.length > 1 && (
-          <Select
-            id="keystore"
-            label={t('addAccount.chooseKeystore.label')}
-            onChange={event => onKeystoreChange(event.target.value)}
-            options={standardKeystores.map(({ keystoreName, rootFingerprint }) => ({
-              text: `${keystoreName} (${rootFingerprint})`,
-              value: rootFingerprint,
-            }))}
-            value={selectedRootFingerprint}
-          />
-        )}
       </>
     );
   case 'success':
@@ -202,8 +211,11 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
     if (requiresAccountTypeSelection(coin)) {
       return 'select-account-type';
     }
+    if (getAddableStandardKeystores(coin).length > 1) {
+      return 'choose-keystore';
+    }
     return 'choose-name';
-  }, [requiresAccountTypeSelection]);
+  }, [getAddableStandardKeystores, requiresAccountTypeSelection]);
 
   const startProcess = useCallback(async () => {
     try {
@@ -269,8 +281,20 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
         setErrorMessage(undefined);
       }
       break;
-    case 'choose-name':
+    case 'choose-keystore':
       if (requiresAccountTypeSelection(selectedCoin)) {
+        setStep('select-account-type');
+      } else if (onlyOneSupportedCoin()) {
+        navigate(-1);
+      } else {
+        setStep('select-coin');
+        setErrorMessage(undefined);
+      }
+      break;
+    case 'choose-name':
+      if (accountType === 'standard' && getAddableStandardKeystores(selectedCoin).length > 1) {
+        setStep('choose-keystore');
+      } else if (requiresAccountTypeSelection(selectedCoin)) {
         setStep('select-account-type');
       } else if (onlyOneSupportedCoin()) {
         navigate(-1);
@@ -292,6 +316,13 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
       setStep(nextStepAfterCoinSelection(selectedCoin));
       break;
     case 'select-account-type':
+      if (accountType === 'standard' && getAddableStandardKeystores(selectedCoin).length > 1) {
+        setStep('choose-keystore');
+      } else {
+        setStep('choose-name');
+      }
+      break;
+    case 'choose-keystore':
       setStep('choose-name');
       break;
     case 'choose-name': {
@@ -338,6 +369,11 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
         titleText: t('addAccount.selectAccountType.title'),
         nextButtonText: t('addAccount.selectAccountType.nextButton'),
       };
+    case 'choose-keystore':
+      return {
+        titleText: t('addAccount.chooseKeystore.title'),
+        nextButtonText: t('addAccount.chooseKeystore.nextButton'),
+      };
     case 'choose-name':
       return {
         titleText: t('addAccount.chooseName.title'),
@@ -362,15 +398,15 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
     await startProcess();
   };
 
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const standardKeystores = accountType === 'standard' ? getAddableStandardKeystores(selectedCoin) : [];
   const currentStep = [
     ...(!onlyOneSupportedCoin() ? ['select-coin'] : []),
     ...(requiresAccountTypeSelection(selectedCoin) ? ['select-account-type'] : []),
+    ...(accountType === 'standard' && standardKeystores.length > 1 ? ['choose-keystore'] : []),
     'choose-name',
     'success'
   ].indexOf(step);
-
-  const isMobile = useMediaQuery('(max-width: 768px)');
-  const standardKeystores = accountType === 'standard' ? getAddableStandardKeystores(selectedCoin) : [];
   const { titleText, nextButtonText } = getTextFor(step);
   return (
     <Main>
@@ -442,6 +478,11 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
                         hidden={!requiresAccountTypeSelection(selectedCoin)}>
                         {t('addAccount.selectAccountType.step')}
                       </Step>
+                      <Step
+                        key="choose-keystore"
+                        hidden={accountType !== 'standard' || standardKeystores.length <= 1}>
+                        {t('addAccount.chooseKeystore.step')}
+                      </Step>
                       <Step key="choose-name">
                         {t('addAccount.chooseName.step')}
                       </Step>
@@ -457,6 +498,7 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
                   disabled={
                     step === 'loading'
                     || (step === 'select-coin' && coinCode === 'choose')
+                    || (step === 'choose-keystore' && selectedRootFingerprint === '')
                     || (step === 'choose-name' && (accountName === '' || adding))
                     || (step === 'choose-name' && accountType === 'standard' && selectedRootFingerprint === '')
                   }

@@ -1449,19 +1449,29 @@ func (handlers *Handlers) getSupportedCoins(*http.Request) interface{} {
 	}
 
 	var availableKeystores []availableKeystore
+	accountsConfig := handlers.backend.Config().AccountsConfig()
 	for _, ks := range connectedKeystores {
 		rootFingerprint, err := ks.RootFingerprint()
 		if err != nil {
 			continue
 		}
+		rootFingerprintHex := hex.EncodeToString(rootFingerprint)
 		keystoreName, err := ks.Name()
 		if err != nil {
-			continue
+			if persistedKeystore, lookupErr := accountsConfig.LookupKeystore(rootFingerprint); lookupErr == nil &&
+				persistedKeystore.Name != "" {
+				keystoreName = persistedKeystore.Name
+			} else {
+				keystoreName = rootFingerprintHex
+			}
+			handlers.log.WithError(err).
+				WithField("rootFingerprint", rootFingerprintHex).
+				Warn("using fallback keystore name while building supported coins")
 		}
 		availableKeystores = append(availableKeystores, availableKeystore{
 			keystore:        ks,
 			keystoreName:    keystoreName,
-			rootFingerprint: hex.EncodeToString(rootFingerprint),
+			rootFingerprint: rootFingerprintHex,
 		})
 	}
 	if len(availableKeystores) == 0 {

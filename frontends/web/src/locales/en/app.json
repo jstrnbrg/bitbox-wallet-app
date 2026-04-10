@@ -112,7 +112,10 @@
       "title": "Name your account"
     },
     "chooseKeystore": {
-      "label": "Choose keystore"
+      "label": "Choose device",
+      "nextButton": "Next",
+      "step": "Choose device",
+      "title": "Choose your device"
     },
     "selectAccountType": {
       "nextButton": "Next",
