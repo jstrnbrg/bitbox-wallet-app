@@ -674,17 +674,22 @@ func (backend *Backend) maybeDiscoverVaults(ks keystore.Keystore) {
 			}
 
 			backend.log.Infof("vault discovery: scanning %s account %d", coinCode, accountNumber)
-			recoveries, hasHistory := backend.scanBeaconForVaults(bc, coinCode, xpub)
-			if !hasHistory {
+			scanResult, err := backend.scanBeaconForVaults(bc, coinCode, xpub)
+			if err != nil {
+				backend.log.WithError(err).Warnf(
+					"vault discovery: transient scan failure for %s account %d", coinCode, accountNumber)
+				continue
+			}
+			if scanResult.NoHistory {
 				backend.log.Infof("vault discovery: no beacon history for %s account %d, stopping", coinCode, accountNumber)
 				break
 			}
-			if len(recoveries) == 0 {
+			if len(scanResult.Recoveries) == 0 {
 				// Beacon had history but no valid backup — continue to next account number.
 				continue
 			}
 
-			for _, recovery := range recoveries {
+			for _, recovery := range scanResult.Recoveries {
 				_, importErr := backend.ImportVaultRecovery(recovery, "")
 				if importErr != nil {
 					// errAccountAlreadyExists is expected for vaults we already know about.
@@ -698,16 +703,20 @@ func (backend *Backend) maybeDiscoverVaults(ks keystore.Keystore) {
 	}
 }
 
+type vaultBeaconScanResult struct {
+	Recoveries []*vaults.RecoveryFile
+	NoHistory  bool
+}
+
 // scanBeaconForVaults checks a single beacon address for one or more valid on-chain vault backups.
 func (backend *Backend) scanBeaconForVaults(
 	bc blockchain.Interface,
 	coinCode coinpkg.Code,
 	xpub *hdkeychain.ExtendedKey,
-) (recoveries []*vaults.RecoveryFile, hasHistory bool) {
+) (*vaultBeaconScanResult, error) {
 	beacon, err := backup.ComputeBeaconAddress(coinCode, xpub)
 	if err != nil {
-		backend.log.WithError(err).Error("vault discovery: failed to compute beacon")
-		return nil, false
+		return nil, errp.Wrap(err, "failed to compute beacon")
 	}
 
 	// Some Electrum server implementations (e.g. electrs) require subscribing to a scripthash
@@ -727,18 +736,16 @@ func (backend *Backend) scanBeaconForVaults(
 	case <-subscribed:
 		backend.log.Debug("vault discovery: beacon subscribed successfully")
 	case <-time.After(30 * time.Second):
-		backend.log.Error("vault discovery: timeout waiting for beacon subscribe")
-		return nil, false
+		return nil, errp.New("timeout waiting for beacon subscribe")
 	}
 
 	history, err := bc.ScriptHashGetHistory(beacon.ScriptHashHex)
 	if err != nil {
-		backend.log.WithError(err).Error("vault discovery: failed to query beacon history")
-		return nil, false
+		return nil, errp.Wrap(err, "failed to query beacon history")
 	}
 
 	if len(history) == 0 {
-		return nil, false
+		return &vaultBeaconScanResult{NoHistory: true}, nil
 	}
 
 	recoveryByPolicyID := map[string]*vaults.RecoveryFile{}
@@ -763,11 +770,13 @@ func (backend *Backend) scanBeaconForVaults(
 		}
 		recoveryByPolicyID[rec.PolicyID] = rec
 	}
-	recoveries = make([]*vaults.RecoveryFile, 0, len(recoveryByPolicyID))
-	for _, recovery := range recoveryByPolicyID {
-		recoveries = append(recoveries, recovery)
+	result := &vaultBeaconScanResult{
+		Recoveries: make([]*vaults.RecoveryFile, 0, len(recoveryByPolicyID)),
 	}
-	slices.SortFunc(recoveries, func(a, b *vaults.RecoveryFile) int {
+	for _, recovery := range recoveryByPolicyID {
+		result.Recoveries = append(result.Recoveries, recovery)
+	}
+	slices.SortFunc(result.Recoveries, func(a, b *vaults.RecoveryFile) int {
 		if a.AccountNumber != b.AccountNumber {
 			if a.AccountNumber < b.AccountNumber {
 				return -1
@@ -783,5 +792,5 @@ func (backend *Backend) scanBeaconForVaults(
 			return 0
 		}
 	})
-	return recoveries, true
+	return result, nil
 }

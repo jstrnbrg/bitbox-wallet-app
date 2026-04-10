@@ -359,9 +359,10 @@ func TestScanBeaconForVaultsReturnsAllUniqueRecoveries(t *testing.T) {
 		},
 	}
 
-	recoveries, hasHistory := backend.scanBeaconForVaults(bc, coinpkg.CodeTBTC, sharedXpub)
-	require.True(t, hasHistory)
-	require.Len(t, recoveries, 2)
+	scanResult, err := backend.scanBeaconForVaults(bc, coinpkg.CodeTBTC, sharedXpub)
+	require.NoError(t, err)
+	require.False(t, scanResult.NoHistory)
+	require.Len(t, scanResult.Recoveries, 2)
 	require.ElementsMatch(t, []string{
 		vaults.RecoveryFileFromDraft(&vaults.Draft{
 			Network:        coinpkg.CodeTBTC,
@@ -375,5 +376,70 @@ func TestScanBeaconForVaultsReturnsAllUniqueRecoveries(t *testing.T) {
 			AccountKeypath: accountKeypath,
 			Participants:   participantsB,
 		}).PolicyID,
-	}, []string{recoveries[0].PolicyID, recoveries[1].PolicyID})
+	}, []string{scanResult.Recoveries[0].PolicyID, scanResult.Recoveries[1].PolicyID})
+}
+
+func TestScanBeaconForVaultsTreatsHistoryErrorsAsErrors(t *testing.T) {
+	backend := newBackend(t, testnetEnabled, regtestDisabled)
+	defer backend.Close()
+
+	coin, err := backend.Coin(coinpkg.CodeTBTC)
+	require.NoError(t, err)
+
+	sharedSigner := newVaultTestKeystore(t, "history-error-signer")
+	accountKeypath := vaults.BIP48AccountKeypath(coinpkg.CodeTBTC, 0)
+	sharedXpub, err := sharedSigner.ExtendedPublicKey(coin, accountKeypath)
+	require.NoError(t, err)
+	beacon, err := backup.ComputeBeaconAddress(coinpkg.CodeTBTC, sharedXpub)
+	require.NoError(t, err)
+
+	bc := &blockchainMock.BlockchainMock{
+		MockScriptHashSubscribe: func(setupAndTeardown func() func(), scriptHash blockchainpkg.ScriptHashHex, success func(string)) {
+			require.Equal(t, beacon.ScriptHashHex, scriptHash)
+			teardown := setupAndTeardown()
+			defer teardown()
+			success("ready")
+		},
+		MockScriptHashGetHistory: func(scriptHash blockchainpkg.ScriptHashHex) (blockchainpkg.TxHistory, error) {
+			require.Equal(t, beacon.ScriptHashHex, scriptHash)
+			return nil, fmt.Errorf("boom")
+		},
+	}
+
+	scanResult, err := backend.scanBeaconForVaults(bc, coinpkg.CodeTBTC, sharedXpub)
+	require.Nil(t, scanResult)
+	require.ErrorContains(t, err, "failed to query beacon history")
+}
+
+func TestScanBeaconForVaultsMarksEmptyHistoryExplicitly(t *testing.T) {
+	backend := newBackend(t, testnetEnabled, regtestDisabled)
+	defer backend.Close()
+
+	coin, err := backend.Coin(coinpkg.CodeTBTC)
+	require.NoError(t, err)
+
+	sharedSigner := newVaultTestKeystore(t, "empty-history-signer")
+	accountKeypath := vaults.BIP48AccountKeypath(coinpkg.CodeTBTC, 0)
+	sharedXpub, err := sharedSigner.ExtendedPublicKey(coin, accountKeypath)
+	require.NoError(t, err)
+	beacon, err := backup.ComputeBeaconAddress(coinpkg.CodeTBTC, sharedXpub)
+	require.NoError(t, err)
+
+	bc := &blockchainMock.BlockchainMock{
+		MockScriptHashSubscribe: func(setupAndTeardown func() func(), scriptHash blockchainpkg.ScriptHashHex, success func(string)) {
+			require.Equal(t, beacon.ScriptHashHex, scriptHash)
+			teardown := setupAndTeardown()
+			defer teardown()
+			success("ready")
+		},
+		MockScriptHashGetHistory: func(scriptHash blockchainpkg.ScriptHashHex) (blockchainpkg.TxHistory, error) {
+			require.Equal(t, beacon.ScriptHashHex, scriptHash)
+			return blockchainpkg.TxHistory{}, nil
+		},
+	}
+
+	scanResult, err := backend.scanBeaconForVaults(bc, coinpkg.CodeTBTC, sharedXpub)
+	require.NoError(t, err)
+	require.True(t, scanResult.NoHistory)
+	require.Empty(t, scanResult.Recoveries)
 }
