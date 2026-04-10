@@ -5,12 +5,20 @@ import type { FailResponse, SuccessResponse } from './response';
 import { apiGet, apiPost } from '@/utils/request';
 import { TSubscriptionCallback, subscribeEndpoint } from './subscribe';
 
+export type TCoinKeystore = {
+  canAddAccount: boolean;
+  keystoreName: string;
+  rootFingerprint: string;
+  suggestedAccountName: string;
+};
+
 export type TCoin = {
   coinCode: CoinCode;
   name: string;
   canAddAccount: boolean;
   suggestedAccountName: string;
   accountTypes: Array<'standard' | 'vault'>;
+  keystores: TCoinKeystore[];
 };
 
 // In other places we use type { FailResponse, SuccessResponse } from './response'

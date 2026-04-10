@@ -617,8 +617,9 @@ func (handlers *Handlers) getDevServers(*http.Request) interface{} {
 
 func (handlers *Handlers) postAddAccount(r *http.Request) interface{} {
 	var jsonBody struct {
-		CoinCode coinpkg.Code `json:"coinCode"`
-		Name     string       `json:"name"`
+		CoinCode        coinpkg.Code `json:"coinCode"`
+		Name            string       `json:"name"`
+		RootFingerprint string       `json:"rootFingerprint"`
 	}
 
 	type response struct {
@@ -632,12 +633,33 @@ func (handlers *Handlers) postAddAccount(r *http.Request) interface{} {
 		return response{Success: false, ErrorMessage: err.Error()}
 	}
 
-	keystore := handlers.backend.Keystore()
-	if keystore == nil {
-		return response{Success: false, ErrorMessage: "Keystore not found"}
+	var selectedKeystore keystore.Keystore
+	if jsonBody.RootFingerprint != "" {
+		rootFingerprint, err := hex.DecodeString(jsonBody.RootFingerprint)
+		if err != nil {
+			return response{Success: false, ErrorMessage: "Invalid root fingerprint"}
+		}
+		selectedKeystore = handlers.backend.KeystoreForFingerprint(rootFingerprint)
+		if selectedKeystore == nil {
+			return response{Success: false, ErrorMessage: "Keystore not found"}
+		}
+	} else {
+		connectedKeystores := handlers.backend.Keystores()
+		switch len(connectedKeystores) {
+		case 0:
+			return response{Success: false, ErrorMessage: "Keystore not found"}
+		case 1:
+			selectedKeystore = connectedKeystores[0]
+		default:
+			return response{Success: false, ErrorMessage: "Root fingerprint is required when multiple keystores are connected"}
+		}
 	}
 
-	accountCode, err := handlers.backend.CreateAndPersistAccountConfig(jsonBody.CoinCode, jsonBody.Name, keystore)
+	if !slices.Contains(handlers.backend.SupportedCoins(selectedKeystore), jsonBody.CoinCode) {
+		return response{Success: false, ErrorMessage: "Keystore does not support requested coin"}
+	}
+
+	accountCode, err := handlers.backend.CreateAndPersistAccountConfig(jsonBody.CoinCode, jsonBody.Name, selectedKeystore)
 	if err != nil {
 		handlers.log.WithError(err).Error("Could not add account")
 		if errCode, ok := errp.Cause(err).(errp.ErrorCode); ok {
@@ -654,8 +676,7 @@ func (handlers *Handlers) getKeystores(*http.Request) interface{} {
 	}
 	keystores := []*json{}
 
-	keystore := handlers.backend.Keystore()
-	if keystore != nil {
+	for _, keystore := range handlers.backend.Keystores() {
 		keystores = append(keystores, &json{
 			Type: keystore.Type(),
 		})
@@ -1395,49 +1416,90 @@ func (handlers *Handlers) getChartData(*http.Request) interface{} {
 	return Result{Success: true, Data: data}
 }
 
-// getSupportedCoinsHandler returns an array of coin codes for which you can add an account.
-// Coins are unioned across all connected keystores so that a Multi edition connected alongside
-// a BTC-only edition still shows all coins the Multi edition supports.
+// getSupportedCoinsHandler returns the supported coins and the keystores that can create them.
 func (handlers *Handlers) getSupportedCoins(*http.Request) interface{} {
+	type keystoreElement struct {
+		CanAddAccount        bool   `json:"canAddAccount"`
+		KeystoreName         string `json:"keystoreName"`
+		RootFingerprint      string `json:"rootFingerprint"`
+		SuggestedAccountName string `json:"suggestedAccountName"`
+	}
 	type element struct {
-		CoinCode             coinpkg.Code `json:"coinCode"`
-		Name                 string       `json:"name"`
-		CanAddAccount        bool         `json:"canAddAccount"`
-		SuggestedAccountName string       `json:"suggestedAccountName"`
-		AccountTypes         []string     `json:"accountTypes"`
+		CoinCode             coinpkg.Code      `json:"coinCode"`
+		Name                 string            `json:"name"`
+		CanAddAccount        bool              `json:"canAddAccount"`
+		SuggestedAccountName string            `json:"suggestedAccountName"`
+		AccountTypes         []string          `json:"accountTypes"`
+		Keystores            []keystoreElement `json:"keystores"`
 	}
-	keystores := handlers.backend.Keystores()
-	if len(keystores) == 0 {
-		return []string{}
+	type availableKeystore struct {
+		keystore        keystore.Keystore
+		keystoreName    string
+		rootFingerprint string
 	}
+	connectedKeystores := handlers.backend.Keystores()
+	if len(connectedKeystores) == 0 {
+		return []element{}
+	}
+
+	var availableKeystores []availableKeystore
+	for _, ks := range connectedKeystores {
+		rootFingerprint, err := ks.RootFingerprint()
+		if err != nil {
+			continue
+		}
+		keystoreName, err := ks.Name()
+		if err != nil {
+			continue
+		}
+		availableKeystores = append(availableKeystores, availableKeystore{
+			keystore:        ks,
+			keystoreName:    keystoreName,
+			rootFingerprint: hex.EncodeToString(rootFingerprint),
+		})
+	}
+	if len(availableKeystores) == 0 {
+		return []element{}
+	}
+	slices.SortFunc(availableKeystores, func(a, b availableKeystore) int {
+		if cmp := strings.Compare(a.keystoreName, b.keystoreName); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(a.rootFingerprint, b.rootFingerprint)
+	})
+
 	// Union supported coins across all connected keystores.
 	coinCodeSeen := map[coinpkg.Code]bool{}
 	var allCoinCodes []coinpkg.Code
-	for _, ks := range keystores {
-		for _, coinCode := range handlers.backend.SupportedCoins(ks) {
+	for _, ks := range availableKeystores {
+		for _, coinCode := range handlers.backend.SupportedCoins(ks.keystore) {
 			if !coinCodeSeen[coinCode] {
 				coinCodeSeen[coinCode] = true
 				allCoinCodes = append(allCoinCodes, coinCode)
 			}
 		}
 	}
-	// Use the first keystore that supports each coin for CanAddAccount / suggestedAccountName.
 	var result []element
 	for _, coinCode := range allCoinCodes {
 		coin, err := handlers.backend.Coin(coinCode)
 		if err != nil {
 			continue
 		}
+		var keystoreElements []keystoreElement
 		var suggestedAccountName string
 		var canAddAccount bool
-		for _, ks := range keystores {
-			name, ok := handlers.backend.CanAddAccount(coinCode, ks)
+		for _, ks := range availableKeystores {
+			name, ok := handlers.backend.CanAddAccount(coinCode, ks.keystore)
+			keystoreElements = append(keystoreElements, keystoreElement{
+				CanAddAccount:        ok,
+				KeystoreName:         ks.keystoreName,
+				RootFingerprint:      ks.rootFingerprint,
+				SuggestedAccountName: name,
+			})
 			if ok {
 				suggestedAccountName = name
 				canAddAccount = true
-				break
-			}
-			if suggestedAccountName == "" {
+			} else if suggestedAccountName == "" {
 				suggestedAccountName = name
 			}
 		}
@@ -1446,6 +1508,7 @@ func (handlers *Handlers) getSupportedCoins(*http.Request) interface{} {
 			Name:                 coin.Name(),
 			CanAddAccount:        canAddAccount,
 			SuggestedAccountName: suggestedAccountName,
+			Keystores:            keystoreElements,
 			AccountTypes: func() []string {
 				switch coinCode {
 				case coinpkg.CodeBTC, coinpkg.CodeTBTC, coinpkg.CodeRBTC:
@@ -1589,8 +1652,8 @@ func (handlers *Handlers) getVaultOnChainBackupPayload(r *http.Request) interfac
 
 func (handlers *Handlers) getVaultOnChainBackupBeacons(r *http.Request) interface{} {
 	type beaconInfo struct {
-		Address   string `json:"address"`
-		PkScript  string `json:"pkScript"`
+		Address  string `json:"address"`
+		PkScript string `json:"pkScript"`
 	}
 	type response struct {
 		Success      bool         `json:"success"`

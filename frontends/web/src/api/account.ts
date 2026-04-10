@@ -444,10 +444,11 @@ export type TAddAccount = {
   errorMessage?: string;
 };
 
-export const addAccount = (coinCode: string, name: string): Promise<TAddAccount> => {
+export const addAccount = (coinCode: string, name: string, rootFingerprint: string): Promise<TAddAccount> => {
   return apiPost('account-add', {
     coinCode,
     name,
+    rootFingerprint,
   });
 };
 

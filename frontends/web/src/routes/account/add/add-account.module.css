@@ -35,6 +35,10 @@
     margin-top: var(--space-eight);
 }
 
+.content :global(select) {
+    text-align: left;
+}
+
 .successMessage {
     color: var(--color-secondary);
 }

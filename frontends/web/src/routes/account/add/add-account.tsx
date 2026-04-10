@@ -3,13 +3,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { TCoin, getSupportedCoins } from '@/api/backend';
+import { TCoin, TCoinKeystore, getSupportedCoins } from '@/api/backend';
 import { subscribeKeystores } from '@/api/keystores';
 import { addAccount, CoinCode, TAddAccount, TAccount } from '@/api/account';
 import { SimpleMarkup } from '@/utils/markup';
 import { View, ViewButtons, ViewContent, ViewHeader } from '@/components/view/view';
 import { Message } from '@/components/message/message';
-import { Button, Input, Radio } from '@/components/forms';
+import { Button, Input, Radio, Select } from '@/components/forms';
 import { GuidedContent, GuideWrapper, Header, Main } from '@/components/layout';
 import { Step, Steps } from '@/components/steps/steps';
 import { CoinDropDown } from '@/components/dropdown/coin-dropdown';
@@ -31,8 +31,11 @@ type TAddAccountContentProps = {
   onAccountTypeChange: (accountType: TAccountTypeSelection) => void;
   onAccountNameInput: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onCoinChange: (coin: TCoin) => void;
+  onKeystoreChange: (rootFingerprint: string) => void;
   selectedCoin?: TCoin;
+  selectedRootFingerprint: string;
   step: TStep;
+  standardKeystores: TCoinKeystore[];
   supportedCoins: TCoin[];
 };
 
@@ -44,8 +47,11 @@ const AddAccountSteps = ({
   onAccountTypeChange,
   onAccountNameInput,
   onCoinChange,
+  onKeystoreChange,
   selectedCoin,
+  selectedRootFingerprint,
   step,
+  standardKeystores,
   supportedCoins,
 }: TAddAccountContentProps) => {
   const { t } = useTranslation();
@@ -124,6 +130,18 @@ const AddAccountSteps = ({
           id="accountName"
           onInput={onAccountNameInput}
           value={accountName} />
+        {standardKeystores.length > 1 && (
+          <Select
+            id="keystore"
+            label={t('addAccount.chooseKeystore.label')}
+            onChange={event => onKeystoreChange(event.target.value)}
+            options={standardKeystores.map(({ keystoreName, rootFingerprint }) => ({
+              text: `${keystoreName} (${rootFingerprint})`,
+              value: rootFingerprint,
+            }))}
+            value={selectedRootFingerprint}
+          />
+        )}
       </>
     );
   case 'success':
@@ -149,12 +167,28 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
   const [accountName, setAccountName] = useState('');
   const [accountType, setAccountType] = useState<TAccountTypeSelection>(preselectedType || 'standard');
   const [coinCode, setCoinCode] = useState<'choose' | CoinCode>('choose');
+  const [selectedRootFingerprint, setSelectedRootFingerprint] = useState('');
   const [errorMessage, setErrorMessage] = useState<string>();
   const [step, setStep] = useState<TStep>('select-coin');
   const [supportedCoins, setSupportedCoins] = useState<TCoin[]>([]);
   const [adding, setAdding] = useState(false);
 
   const selectedCoin = supportedCoins.find(({ coinCode: supportedCoinCode }) => supportedCoinCode === coinCode);
+
+  const getAddableStandardKeystores = useCallback((coin?: TCoin): TCoinKeystore[] => {
+    return coin?.keystores.filter(({ canAddAccount }) => canAddAccount) || [];
+  }, []);
+
+  const getSuggestedAccountName = useCallback((coin?: TCoin, rootFingerprint?: string): string => {
+    if (rootFingerprint) {
+      return coin?.keystores.find(keystore => keystore.rootFingerprint === rootFingerprint)?.suggestedAccountName || '';
+    }
+    return coin?.suggestedAccountName || '';
+  }, []);
+
+  const getDefaultRootFingerprint = useCallback((coin?: TCoin): string => {
+    return getAddableStandardKeystores(coin)[0]?.rootFingerprint || '';
+  }, [getAddableStandardKeystores]);
 
   const onlyOneSupportedCoin = (): boolean => {
     return supportedCoins.length === 1;
@@ -181,8 +215,10 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
       if (preselectedType === 'vault') {
         const btcCoin = coins.find(c => c.accountTypes.includes('vault'));
         if (btcCoin) {
+          const defaultRootFingerprint = getDefaultRootFingerprint(btcCoin);
           setCoinCode(btcCoin.coinCode);
-          setAccountName(btcCoin.suggestedAccountName);
+          setSelectedRootFingerprint(defaultRootFingerprint);
+          setAccountName(getSuggestedAccountName(btcCoin, defaultRootFingerprint));
           setAccountType('vault');
           setStep('choose-name');
           return;
@@ -194,19 +230,21 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
       if (!firstCoin) {
         setCoinCode('choose');
         setAccountName('');
+        setSelectedRootFingerprint('');
         setStep('select-coin');
         return;
       }
       setCoinCode(onlyOneCoinIsSupported ? firstCoin.coinCode : 'choose');
       setAccountType('standard');
+      setSelectedRootFingerprint(onlyOneCoinIsSupported ? getDefaultRootFingerprint(firstCoin) : '');
       setStep(onlyOneCoinIsSupported ? nextStepAfterCoinSelection(firstCoin) : 'select-coin');
       if (onlyOneCoinIsSupported) {
-        setAccountName(firstCoin.suggestedAccountName);
+        setAccountName(getSuggestedAccountName(firstCoin, getDefaultRootFingerprint(firstCoin)));
       }
     } catch (err) {
       console.error(err);
     }
-  }, [nextStepAfterCoinSelection, preselectedType]);
+  }, [getDefaultRootFingerprint, getSuggestedAccountName, nextStepAfterCoinSelection, preselectedType]);
 
   useEffect(() => {
     startProcess();
@@ -262,7 +300,7 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
         break;
       }
       setAdding(true);
-      const responseData: TAddAccount = await addAccount(coinCode, accountName);
+      const responseData: TAddAccount = await addAccount(coinCode, accountName, selectedRootFingerprint);
       setAdding(false);
       if (responseData.success) {
         setAccountCode(responseData.accountCode);
@@ -318,6 +356,7 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
     setAccountName('');
     setAccountType('standard');
     setCoinCode('choose');
+    setSelectedRootFingerprint('');
     setErrorMessage(undefined);
     setStep('select-coin');
     await startProcess();
@@ -331,6 +370,7 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
   ].indexOf(step);
 
   const isMobile = useMediaQuery('(max-width: 768px)');
+  const standardKeystores = accountType === 'standard' ? getAddableStandardKeystores(selectedCoin) : [];
   const { titleText, nextButtonText } = getTextFor(step);
   return (
     <Main>
@@ -368,12 +408,27 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
                     onAccountTypeChange={setAccountType}
                     onAccountNameInput={e => setAccountName(e.target.value)}
                     onCoinChange={coin => {
+                      const defaultRootFingerprint = getDefaultRootFingerprint(coin);
                       setCoinCode(coin.coinCode);
-                      setAccountName(coin.suggestedAccountName);
+                      setSelectedRootFingerprint(defaultRootFingerprint);
+                      setAccountName(getSuggestedAccountName(coin, defaultRootFingerprint));
                       setAccountType('standard');
                     }}
+                    onKeystoreChange={rootFingerprint => {
+                      const previousSuggestedName = getSuggestedAccountName(selectedCoin, selectedRootFingerprint);
+                      const nextSuggestedName = getSuggestedAccountName(selectedCoin, rootFingerprint);
+                      setSelectedRootFingerprint(rootFingerprint);
+                      setAccountName(currentAccountName => {
+                        if (!currentAccountName || currentAccountName === previousSuggestedName) {
+                          return nextSuggestedName;
+                        }
+                        return currentAccountName;
+                      });
+                    }}
                     selectedCoin={selectedCoin}
+                    selectedRootFingerprint={selectedRootFingerprint}
                     step={step}
+                    standardKeystores={standardKeystores}
                     supportedCoins={supportedCoins} />
                 </div>
                 {(step !== 'success' && step !== 'loading') && (
@@ -403,6 +458,7 @@ export const AddAccount = ({ accounts }: TAddAccountProps) => {
                     step === 'loading'
                     || (step === 'select-coin' && coinCode === 'choose')
                     || (step === 'choose-name' && (accountName === '' || adding))
+                    || (step === 'choose-name' && accountType === 'standard' && selectedRootFingerprint === '')
                   }
                   primary
                   type="submit">
