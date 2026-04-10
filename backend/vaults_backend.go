@@ -672,8 +672,7 @@ func (backend *Backend) maybeDiscoverVaults(ks keystore.Keystore) {
 				break
 			}
 
-			backend.log.Infof("vault discovery: scanning %s account %d, xpub=%s, keypath=%s",
-				coinCode, accountNumber, xpub.String(), accountKeypath.Encode())
+			backend.log.Infof("vault discovery: scanning %s account %d", coinCode, accountNumber)
 			recovery, hasHistory := backend.scanBeaconForVault(bc, coinCode, xpub)
 			if !hasHistory {
 				backend.log.Infof("vault discovery: no beacon history for %s account %d, stopping", coinCode, accountNumber)
@@ -713,12 +712,10 @@ func (backend *Backend) scanBeaconForVault(
 	// Some Electrum server implementations (e.g. electrs) require subscribing to a scripthash
 	// before its history can be queried. Subscribe first and wait for the initial status response.
 	subscribed := make(chan struct{}, 1)
-	backend.log.Infof("vault discovery: beacon address=%s scripthash=%s", beacon.Address.EncodeAddress(), beacon.ScriptHashHex)
 	bc.ScriptHashSubscribe(
 		func() func() { return func() {} },
 		beacon.ScriptHashHex,
-		func(status string) {
-			backend.log.Infof("vault discovery: beacon subscribe callback, status=%q", status)
+		func(string) {
 			select {
 			case subscribed <- struct{}{}:
 			default:
@@ -727,7 +724,7 @@ func (backend *Backend) scanBeaconForVault(
 	)
 	select {
 	case <-subscribed:
-		backend.log.Info("vault discovery: beacon subscribed successfully")
+		backend.log.Debug("vault discovery: beacon subscribed successfully")
 	case <-time.After(30 * time.Second):
 		backend.log.Error("vault discovery: timeout waiting for beacon subscribe")
 		return nil, false
