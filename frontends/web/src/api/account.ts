@@ -454,6 +454,7 @@ export const addAccount = (coinCode: string, name: string, rootFingerprint: stri
 
 export type TVaultDraftState =
   | 'collectingSigners'
+  | 'readyForDeviceConfirmation'
   | 'readyForBackup'
   | 'awaitingOnChainBackup'
   | 'readyToComplete'
@@ -474,6 +475,7 @@ export type TVaultDraft = {
   createdAt: string;
   updatedAt: string;
   recoveryAcknowledged: boolean;
+  registeredSigners: string[];
   policyId?: string;
 };
 
@@ -537,6 +539,13 @@ export const getVaultSetupDraft = (id: string): Promise<TVaultDraftResponse> => 
 
 export const enrollVaultSetupSigner = (id: string): Promise<TVaultDraftResponse> => {
   return apiPost(`vault-setup/${id}/enroll-signer`);
+};
+
+export const confirmVaultSetupSigner = (
+  id: string,
+  rootFingerprint: string,
+): Promise<TVaultDraftResponse> => {
+  return apiPost(`vault-setup/${id}/confirm-signer`, { rootFingerprint });
 };
 
 export const getVaultSetupRecoveryFile = (id: string): Promise<TVaultRecoveryResponse> => {

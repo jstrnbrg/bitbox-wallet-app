@@ -99,6 +99,12 @@ type KeystoreMock struct {
 	// BTCXPubsFunc mocks the BTCXPubs method.
 	BTCXPubsFunc func(coinMoqParam coin.Coin, absoluteKeypaths []signing.AbsoluteKeypath) ([]*hdkeychain.ExtendedKey, error)
 
+	// BTCIsScriptConfigRegisteredFunc mocks the BTCIsScriptConfigRegistered method.
+	BTCIsScriptConfigRegisteredFunc func(coinMoqParam coin.Coin, configuration *signing.Configuration) (bool, error)
+
+	// BTCRegisterScriptConfigFunc mocks the BTCRegisterScriptConfig method.
+	BTCRegisterScriptConfigFunc func(coinMoqParam coin.Coin, configuration *signing.Configuration, name string) error
+
 	// CanSignMessageFunc mocks the CanSignMessage method.
 	CanSignMessageFunc func(code coin.Code) bool
 
@@ -170,6 +176,22 @@ type KeystoreMock struct {
 			CoinMoqParam coin.Coin
 			// AbsoluteKeypaths is the absoluteKeypaths argument value.
 			AbsoluteKeypaths []signing.AbsoluteKeypath
+		}
+		// BTCIsScriptConfigRegistered holds details about calls to the BTCIsScriptConfigRegistered method.
+		BTCIsScriptConfigRegistered []struct {
+			// CoinMoqParam is the coinMoqParam argument value.
+			CoinMoqParam coin.Coin
+			// Configuration is the configuration argument value.
+			Configuration *signing.Configuration
+		}
+		// BTCRegisterScriptConfig holds details about calls to the BTCRegisterScriptConfig method.
+		BTCRegisterScriptConfig []struct {
+			// CoinMoqParam is the coinMoqParam argument value.
+			CoinMoqParam coin.Coin
+			// Configuration is the configuration argument value.
+			Configuration *signing.Configuration
+			// Name is the name argument value.
+			Name string
 		}
 		// CanSignMessage holds details about calls to the CanSignMessage method.
 		CanSignMessage []struct {
@@ -290,6 +312,8 @@ type KeystoreMock struct {
 		}
 	}
 	lockBTCXPubs                        sync.RWMutex
+	lockBTCIsScriptConfigRegistered     sync.RWMutex
+	lockBTCRegisterScriptConfig         sync.RWMutex
 	lockCanSignMessage                  sync.RWMutex
 	lockCanVerifyAddress                sync.RWMutex
 	lockCanVerifyExtendedPublicKey      sync.RWMutex
@@ -346,6 +370,83 @@ func (mock *KeystoreMock) BTCXPubsCalls() []struct {
 	mock.lockBTCXPubs.RLock()
 	calls = mock.calls.BTCXPubs
 	mock.lockBTCXPubs.RUnlock()
+	return calls
+}
+
+// BTCIsScriptConfigRegistered calls BTCIsScriptConfigRegisteredFunc.
+func (mock *KeystoreMock) BTCIsScriptConfigRegistered(
+	coinMoqParam coin.Coin,
+	configuration *signing.Configuration,
+) (bool, error) {
+	if mock.BTCIsScriptConfigRegisteredFunc == nil {
+		panic("KeystoreMock.BTCIsScriptConfigRegisteredFunc: method is nil but Keystore.BTCIsScriptConfigRegistered was just called")
+	}
+	callInfo := struct {
+		CoinMoqParam  coin.Coin
+		Configuration *signing.Configuration
+	}{
+		CoinMoqParam:  coinMoqParam,
+		Configuration: configuration,
+	}
+	mock.lockBTCIsScriptConfigRegistered.Lock()
+	mock.calls.BTCIsScriptConfigRegistered = append(mock.calls.BTCIsScriptConfigRegistered, callInfo)
+	mock.lockBTCIsScriptConfigRegistered.Unlock()
+	return mock.BTCIsScriptConfigRegisteredFunc(coinMoqParam, configuration)
+}
+
+// BTCIsScriptConfigRegisteredCalls gets all the calls that were made to BTCIsScriptConfigRegistered.
+func (mock *KeystoreMock) BTCIsScriptConfigRegisteredCalls() []struct {
+	CoinMoqParam  coin.Coin
+	Configuration *signing.Configuration
+} {
+	var calls []struct {
+		CoinMoqParam  coin.Coin
+		Configuration *signing.Configuration
+	}
+	mock.lockBTCIsScriptConfigRegistered.RLock()
+	calls = mock.calls.BTCIsScriptConfigRegistered
+	mock.lockBTCIsScriptConfigRegistered.RUnlock()
+	return calls
+}
+
+// BTCRegisterScriptConfig calls BTCRegisterScriptConfigFunc.
+func (mock *KeystoreMock) BTCRegisterScriptConfig(
+	coinMoqParam coin.Coin,
+	configuration *signing.Configuration,
+	name string,
+) error {
+	if mock.BTCRegisterScriptConfigFunc == nil {
+		panic("KeystoreMock.BTCRegisterScriptConfigFunc: method is nil but Keystore.BTCRegisterScriptConfig was just called")
+	}
+	callInfo := struct {
+		CoinMoqParam  coin.Coin
+		Configuration *signing.Configuration
+		Name          string
+	}{
+		CoinMoqParam:  coinMoqParam,
+		Configuration: configuration,
+		Name:          name,
+	}
+	mock.lockBTCRegisterScriptConfig.Lock()
+	mock.calls.BTCRegisterScriptConfig = append(mock.calls.BTCRegisterScriptConfig, callInfo)
+	mock.lockBTCRegisterScriptConfig.Unlock()
+	return mock.BTCRegisterScriptConfigFunc(coinMoqParam, configuration, name)
+}
+
+// BTCRegisterScriptConfigCalls gets all the calls that were made to BTCRegisterScriptConfig.
+func (mock *KeystoreMock) BTCRegisterScriptConfigCalls() []struct {
+	CoinMoqParam  coin.Coin
+	Configuration *signing.Configuration
+	Name          string
+} {
+	var calls []struct {
+		CoinMoqParam  coin.Coin
+		Configuration *signing.Configuration
+		Name          string
+	}
+	mock.lockBTCRegisterScriptConfig.RLock()
+	calls = mock.calls.BTCRegisterScriptConfig
+	mock.lockBTCRegisterScriptConfig.RUnlock()
 	return calls
 }
 

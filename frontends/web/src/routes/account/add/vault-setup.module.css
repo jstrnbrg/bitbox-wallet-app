@@ -61,6 +61,25 @@
     color: var(--color-secondary);
 }
 
+.deviceActions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-half);
+    justify-content: space-between;
+}
+
+.deviceConfirmed {
+    color: var(--color-success);
+    font-size: var(--size-small);
+    font-weight: 600;
+}
+
+.devicePending {
+    color: var(--color-secondary);
+    font-size: var(--size-small);
+}
+
 .sectionTitle {
     color: var(--color-default);
     font-weight: 600;

@@ -5,6 +5,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   completeVaultSetup,
+  confirmVaultSetupSigner,
   discardVaultSetup,
   enrollVaultSetupSigner,
   getAccounts,
@@ -55,6 +56,7 @@ export const VaultSetup = () => {
   const [step, setStep] = useState<'devices' | 'backup'>('devices');
   const startedRef = useRef(false);
   const [busy, setBusy] = useState(false);
+  const [confirmingFingerprint, setConfirmingFingerprint] = useState<string>();
   const [errorMessage, setErrorMessage] = useState<string>();
 
   const translateErrorCode = (errorCode: string) => {
@@ -149,6 +151,33 @@ export const VaultSetup = () => {
       setErrorMessage(t('genericError'));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleConfirmSigner = async (rootFingerprint: string) => {
+    if (!draft) {
+      return;
+    }
+    setBusy(true);
+    setConfirmingFingerprint(rootFingerprint);
+    try {
+      const result = await confirmVaultSetupSigner(draft.id, rootFingerprint);
+      if (!result.success) {
+        if (result.errorCode) {
+          setErrorMessage(translateErrorCode(result.errorCode));
+        } else {
+          setErrorMessage(result.errorMessage);
+        }
+        return;
+      }
+      setDraft(result.draft);
+      setErrorMessage(undefined);
+    } catch (error) {
+      console.error(error);
+      setErrorMessage(t('genericError'));
+    } finally {
+      setBusy(false);
+      setConfirmingFingerprint(undefined);
     }
   };
 
@@ -252,16 +281,25 @@ export const VaultSetup = () => {
                 {draft && step === 'devices' ? (
                   <>
                     <p className={styles.description}>
-                      {t('addAccount.vault.collectingDescription')}
+                      {draft.state === 'collectingSigners'
+                        ? t('addAccount.vault.collectingDescription')
+                        : t('addAccount.vault.confirmDescription')}
                     </p>
                     <p className={styles.description}>
-                      {t('addAccount.vault.progress', {
-                        count: draft.participants.length,
-                      })}
+                      {draft.state === 'collectingSigners'
+                        ? t('addAccount.vault.progress', {
+                          count: draft.participants.length,
+                        })
+                        : t('addAccount.vault.confirmationProgress', {
+                          count: draft.registeredSigners.length,
+                        })}
                     </p>
                     <div className={styles.deviceTable}>
                       {Array.from({ length: 3 }).map((_, index) => {
                         const participant = draft.participants[index];
+                        const confirmed = participant
+                          ? draft.registeredSigners.includes(participant.keyInfo.rootFingerprint)
+                          : false;
                         return (
                           <div
                             className={[styles.deviceSlot, participant && styles.deviceSlotFilled].filter(Boolean).join(' ')}
@@ -276,6 +314,25 @@ export const VaultSetup = () => {
                                 )}
                                 <span className={styles.deviceFingerprint}>{participant.keyInfo.rootFingerprint}</span>
                                 <code className={styles.deviceKeypath}>{participant.keyInfo.keypath}</code>
+                                {draft.participants.length === 3 && (
+                                  <div className={styles.deviceActions}>
+                                    <span className={confirmed ? styles.deviceConfirmed : styles.devicePending}>
+                                      {confirmed
+                                        ? t('addAccount.vault.confirmedOnDevice')
+                                        : t('addAccount.vault.confirmationPending')}
+                                    </span>
+                                    {!confirmed && (
+                                      <Button
+                                        disabled={busy}
+                                        onClick={() => handleConfirmSigner(participant.keyInfo.rootFingerprint)}
+                                        secondary>
+                                        {confirmingFingerprint === participant.keyInfo.rootFingerprint
+                                          ? t('addAccount.vault.confirmingOnDevice')
+                                          : t('addAccount.vault.confirmOnDevice')}
+                                      </Button>
+                                    )}
+                                  </div>
+                                )}
                               </>
                             ) : (
                               <span className={styles.deviceSlotEmpty}>
@@ -354,7 +411,10 @@ export const VaultSetup = () => {
                         {t('addAccount.vault.enrollSigner')}
                       </Button>
                     ) : (
-                      <Button primary onClick={() => setStep('backup')}>
+                      <Button
+                        primary
+                        disabled={busy || draft.state !== 'readyForBackup'}
+                        onClick={() => setStep('backup')}>
                         {t('button.continue')}
                       </Button>
                     )

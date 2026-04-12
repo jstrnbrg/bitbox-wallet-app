@@ -4,8 +4,10 @@ package backend
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/accounts"
@@ -61,6 +63,82 @@ func vaultDescriptorConfigFromParticipants(
 		return nil, errp.New("vault descriptor configuration missing")
 	}
 	return config, nil
+}
+
+func participantFingerprintHex(participant signing.BitcoinPolicyParticipant) string {
+	return hex.EncodeToString(participant.KeyInfo.RootFingerprint)
+}
+
+func syncVaultDraftState(draft *vaults.Draft) {
+	if draft.RegisteredSigners == nil {
+		draft.RegisteredSigners = []string{}
+	}
+	if draft.State == vaults.DraftStateCompleted || draft.State == vaults.DraftStateDiscarded {
+		return
+	}
+	participantFingerprints := make(map[string]struct{}, len(draft.Participants))
+	for _, participant := range draft.Participants {
+		participantFingerprints[participantFingerprintHex(participant)] = struct{}{}
+	}
+	filtered := make([]string, 0, len(draft.RegisteredSigners))
+	for _, signer := range draft.RegisteredSigners {
+		if _, ok := participantFingerprints[signer]; ok && !slices.Contains(filtered, signer) {
+			filtered = append(filtered, signer)
+		}
+	}
+	draft.RegisteredSigners = filtered
+
+	switch {
+	case len(draft.Participants) < 3:
+		draft.State = vaults.DraftStateCollectingSigners
+	case len(draft.RegisteredSigners) < 3:
+		draft.State = vaults.DraftStateReadyForDeviceConfirmation
+	default:
+		draft.State = vaults.DraftStateReadyForBackup
+	}
+}
+
+func vaultDraftParticipantByFingerprint(
+	draft *vaults.Draft,
+	rootFingerprint []byte,
+) *signing.BitcoinPolicyParticipant {
+	for _, participant := range draft.Participants {
+		if bytes.Equal(participant.KeyInfo.RootFingerprint, rootFingerprint) {
+			return &participant
+		}
+	}
+	return nil
+}
+
+func vaultPolicyRegistrationName(draft *vaults.Draft) string {
+	const maxNameLen = 30
+	policySuffix := draft.PolicyID
+	if len(policySuffix) > 4 {
+		policySuffix = policySuffix[len(policySuffix)-4:]
+	}
+	suffix := ""
+	if policySuffix != "" {
+		suffix = fmt.Sprintf(" #%s", policySuffix)
+	}
+	name := strings.TrimSpace(draft.Name)
+	if name == "" {
+		name = "Vault"
+	}
+	maxBaseLen := maxNameLen - len(suffix)
+	if maxBaseLen < 1 {
+		return "Vault"
+	}
+	if len(name) > maxBaseLen {
+		name = strings.TrimSpace(name[:maxBaseLen])
+	}
+	if name == "" {
+		name = "Vault"
+	}
+	return name + suffix
+}
+
+func isDuplicateEntryError(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "duplicate entry")
 }
 
 func (backend *Backend) persistVaultAccountConfig(
@@ -138,12 +216,24 @@ func (backend *Backend) StartVaultSetup(coinCode coinpkg.Code, name string) (*va
 
 // VaultSetupDrafts returns all visible setup drafts.
 func (backend *Backend) VaultSetupDrafts() ([]*vaults.Draft, error) {
-	return backend.vaultDraftStore.ListDrafts()
+	drafts, err := backend.vaultDraftStore.ListDrafts()
+	if err != nil {
+		return nil, err
+	}
+	for _, draft := range drafts {
+		syncVaultDraftState(draft)
+	}
+	return drafts, nil
 }
 
 // VaultSetupDraft returns one setup draft.
 func (backend *Backend) VaultSetupDraft(id string) (*vaults.Draft, error) {
-	return backend.vaultDraftStore.GetDraft(id)
+	draft, err := backend.vaultDraftStore.GetDraft(id)
+	if err != nil {
+		return nil, err
+	}
+	syncVaultDraftState(draft)
+	return draft, nil
 }
 
 // EnrollVaultSigner enrolls all currently connected keystores into the given draft.
@@ -165,6 +255,9 @@ func (backend *Backend) EnrollVaultSigner(id string) (*vaults.Draft, error) {
 
 	enrolled := 0
 	for _, ks := range backend.keystores {
+		if len(draft.Participants) >= 3 {
+			break
+		}
 		if !ks.SupportsAccount(coinInstance, signing.ScriptTypeP2WSH) {
 			continue
 		}
@@ -220,8 +313,75 @@ func (backend *Backend) EnrollVaultSigner(id string) (*vaults.Draft, error) {
 			coinInstance, _ := backend.Coin(draft.Network)
 			draft.Name = defaultVaultName(coinInstance, draft.AccountNumber)
 		}
-		draft.State = vaults.DraftStateReadyForBackup
+		syncVaultDraftState(draft)
 	}
+	if err := backend.vaultDraftStore.SaveDraft(draft); err != nil {
+		return nil, err
+	}
+	return draft, nil
+}
+
+// ConfirmVaultSigner registers the final vault policy on one specific participant device.
+func (backend *Backend) ConfirmVaultSigner(id string, rootFingerprint []byte) (*vaults.Draft, error) {
+	draft, err := backend.vaultDraftStore.GetDraft(id)
+	if err != nil {
+		return nil, err
+	}
+	syncVaultDraftState(draft)
+	if len(draft.Participants) != 3 {
+		return nil, errp.New("vault draft is not ready for device confirmation")
+	}
+	if vaultDraftParticipantByFingerprint(draft, rootFingerprint) == nil {
+		return nil, errp.New("signer is not part of this vault draft")
+	}
+	coinInstance, err := backend.Coin(draft.Network)
+	if err != nil {
+		return nil, err
+	}
+	descriptorConfig, err := vaultDescriptorConfigFromParticipants(
+		draft.Network,
+		draft.AccountNumber,
+		draft.Participants,
+	)
+	if err != nil {
+		return nil, err
+	}
+	ks, err := backend.ConnectKeystore(rootFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	registered, err := ks.BTCIsScriptConfigRegistered(coinInstance, descriptorConfig)
+	if err != nil {
+		return nil, err
+	}
+	if !registered {
+		name := vaultPolicyRegistrationName(draft)
+		if err := ks.BTCRegisterScriptConfig(coinInstance, descriptorConfig, name); err != nil {
+			if !isDuplicateEntryError(err) {
+				return nil, err
+			}
+			registered, registeredErr := ks.BTCIsScriptConfigRegistered(coinInstance, descriptorConfig)
+			if registeredErr != nil {
+				return nil, registeredErr
+			}
+			if !registered {
+				return nil, err
+			}
+		}
+		registered, err = ks.BTCIsScriptConfigRegistered(coinInstance, descriptorConfig)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !registered {
+		return nil, errp.New("vault policy registration could not be verified")
+	}
+	signer := hex.EncodeToString(rootFingerprint)
+	if !slices.Contains(draft.RegisteredSigners, signer) {
+		draft.RegisteredSigners = append(draft.RegisteredSigners, signer)
+		slices.Sort(draft.RegisteredSigners)
+	}
+	syncVaultDraftState(draft)
 	if err := backend.vaultDraftStore.SaveDraft(draft); err != nil {
 		return nil, err
 	}
@@ -234,7 +394,8 @@ func (backend *Backend) VaultSetupRecoveryFile(id string) (*vaults.RecoveryFile,
 	if err != nil {
 		return nil, err
 	}
-	if len(draft.Participants) != 3 {
+	syncVaultDraftState(draft)
+	if draft.State != vaults.DraftStateReadyForBackup {
 		return nil, errp.New("vault draft is not ready for backup")
 	}
 	return vaults.RecoveryFileFromDraft(draft), nil
@@ -251,8 +412,12 @@ func (backend *Backend) CompleteVaultSetup(id string, name string, recoveryAckno
 	if err != nil {
 		return "", err
 	}
+	syncVaultDraftState(draft)
 	if len(draft.Participants) != 3 {
 		return "", errp.New("vault draft is incomplete")
+	}
+	if len(draft.RegisteredSigners) != 3 {
+		return "", errp.New("vault policy must be confirmed on all devices")
 	}
 	if !recoveryAcknowledged {
 		return "", errp.New("recovery backup must be acknowledged")

@@ -103,6 +103,7 @@ type Backend interface {
 	VaultSetupDrafts() ([]*vaults.Draft, error)
 	VaultSetupDraft(id string) (*vaults.Draft, error)
 	EnrollVaultSigner(id string) (*vaults.Draft, error)
+	ConfirmVaultSigner(id string, rootFingerprint []byte) (*vaults.Draft, error)
 	VaultSetupRecoveryFile(id string) (*vaults.RecoveryFile, error)
 	CompleteVaultSetup(id string, name string, recoveryAcknowledged bool) (accountsTypes.Code, error)
 	DiscardVaultSetup(id string) error
@@ -249,6 +250,7 @@ func NewHandlers(
 	getAPIRouterNoError(apiRouter)("/vault-setup/drafts", handlers.getVaultSetupDrafts).Methods("GET")
 	getAPIRouterNoError(apiRouter)("/vault-setup/{id}", handlers.getVaultSetupDraft).Methods("GET")
 	getAPIRouterNoError(apiRouter)("/vault-setup/{id}/enroll-signer", handlers.postVaultSetupEnrollSigner).Methods("POST")
+	getAPIRouterNoError(apiRouter)("/vault-setup/{id}/confirm-signer", handlers.postVaultSetupConfirmSigner).Methods("POST")
 	getAPIRouterNoError(apiRouter)("/vault-setup/{id}/recovery-file", handlers.getVaultSetupRecoveryFile).Methods("GET")
 	getAPIRouterNoError(apiRouter)("/vault-setup/{id}/complete", handlers.postVaultSetupComplete).Methods("POST")
 	getAPIRouterNoError(apiRouter)("/vault-setup/{id}/discard", handlers.postVaultSetupDiscard).Methods("POST")
@@ -1599,6 +1601,34 @@ func (handlers *Handlers) postVaultSetupEnrollSigner(r *http.Request) interface{
 		}
 		if errp.Cause(err) == keystore.ErrUnsupportedFeature {
 			resp.ErrorCode = string(keystore.ErrUnsupportedFeature)
+		}
+		return resp
+	}
+	return response{Success: true, Draft: draft}
+}
+
+func (handlers *Handlers) postVaultSetupConfirmSigner(r *http.Request) interface{} {
+	type response struct {
+		Success      bool          `json:"success"`
+		Draft        *vaults.Draft `json:"draft,omitempty"`
+		ErrorMessage string        `json:"errorMessage,omitempty"`
+		ErrorCode    string        `json:"errorCode,omitempty"`
+	}
+	var request struct {
+		RootFingerprint jsonp.HexBytes `json:"rootFingerprint"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		return response{Success: false, ErrorMessage: err.Error()}
+	}
+	draft, err := handlers.backend.ConfirmVaultSigner(mux.Vars(r)["id"], []byte(request.RootFingerprint))
+	if err != nil {
+		resp := response{Success: false, ErrorMessage: err.Error()}
+		if code, ok := errp.Cause(err).(errp.ErrorCode); ok {
+			resp.ErrorCode = string(code)
+		}
+		if errp.Cause(err) == keystore.ErrUnsupportedFeature ||
+			errp.Cause(err) == keystore.ErrFirmwareUpgradeRequired {
+			resp.ErrorCode = errp.Cause(err).Error()
 		}
 		return resp
 	}

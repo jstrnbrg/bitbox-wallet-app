@@ -161,6 +161,23 @@ func (keystore *Keystore) VerifyExtendedPublicKey(coin coin.Coin, configuration 
 	return errp.New("The software-based keystore has no secure output to display the public key.")
 }
 
+// BTCIsScriptConfigRegistered implements keystore.Keystore.
+func (keystore *Keystore) BTCIsScriptConfigRegistered(
+	coin coin.Coin,
+	configuration *signing.Configuration,
+) (bool, error) {
+	return true, nil
+}
+
+// BTCRegisterScriptConfig implements keystore.Keystore.
+func (keystore *Keystore) BTCRegisterScriptConfig(
+	coin coin.Coin,
+	configuration *signing.Configuration,
+	name string,
+) error {
+	return nil
+}
+
 // ExtendedPublicKey implements keystore.Keystore.
 func (keystore *Keystore) ExtendedPublicKey(
 	coin coin.Coin, absoluteKeypath signing.AbsoluteKeypath,

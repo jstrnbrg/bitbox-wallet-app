@@ -92,6 +92,14 @@ type Keystore interface {
 	// VerifyExtendedPublicKey displays the public key on the device for verification
 	VerifyExtendedPublicKey(coin.Coin, *signing.Configuration) error
 
+	// BTCIsScriptConfigRegistered returns whether a bitcoin descriptor account has already been
+	// persisted on the keystore. Non-descriptor accounts may return true.
+	BTCIsScriptConfigRegistered(coin.Coin, *signing.Configuration) (bool, error)
+
+	// BTCRegisterScriptConfig persists a bitcoin descriptor account on the keystore. Non-descriptor
+	// accounts may no-op.
+	BTCRegisterScriptConfig(coin.Coin, *signing.Configuration, string) error
+
 	// ExtendedPublicKey returns the extended public key at the given absolute keypath.
 	ExtendedPublicKey(coin.Coin, signing.AbsoluteKeypath) (*hdkeychain.ExtendedKey, error)
 

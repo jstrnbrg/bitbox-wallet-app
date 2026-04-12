@@ -87,22 +87,7 @@ func (keystore *keystore) ensureBTCScriptConfigRegistered(
 	configuration *signing.Configuration,
 	name string,
 ) error {
-	if configuration.BitcoinDescriptor == nil {
-		return nil
-	}
-	msgCoin, ok := btcMsgCoinMap[coin.Code()]
-	if !ok {
-		return errp.New("unsupported coin")
-	}
-	scriptConfigWithKeypath, err := keystore.btcMultisigScriptConfig(configuration)
-	if err != nil {
-		return err
-	}
-	registered, err := keystore.device.BTCIsScriptConfigRegistered(
-		msgCoin,
-		scriptConfigWithKeypath.ScriptConfig,
-		scriptConfigWithKeypath.Keypath,
-	)
+	registered, err := keystore.BTCIsScriptConfigRegistered(coin, configuration)
 	if err != nil {
 		return err
 	}
@@ -110,12 +95,7 @@ func (keystore *keystore) ensureBTCScriptConfigRegistered(
 		return nil
 	}
 	name = btcPolicyRegistrationName(name, configuration)
-	return keystore.device.BTCRegisterScriptConfig(
-		msgCoin,
-		scriptConfigWithKeypath.ScriptConfig,
-		scriptConfigWithKeypath.Keypath,
-		name,
-	)
+	return keystore.BTCRegisterScriptConfig(coin, configuration, name)
 }
 
 func btcPolicyRegistrationName(name string, configuration *signing.Configuration) string {
@@ -353,6 +333,54 @@ func (keystore *keystore) VerifyExtendedPublicKey(
 		return errp.New("unsupported operation")
 	}
 	return nil
+}
+
+// BTCIsScriptConfigRegistered implements keystore.Keystore.
+func (keystore *keystore) BTCIsScriptConfigRegistered(
+	coin coinpkg.Coin,
+	configuration *signing.Configuration,
+) (bool, error) {
+	if configuration.BitcoinDescriptor == nil {
+		return true, nil
+	}
+	msgCoin, ok := btcMsgCoinMap[coin.Code()]
+	if !ok {
+		return false, errp.New("unsupported coin")
+	}
+	scriptConfigWithKeypath, err := keystore.btcMultisigScriptConfig(configuration)
+	if err != nil {
+		return false, err
+	}
+	return keystore.device.BTCIsScriptConfigRegistered(
+		msgCoin,
+		scriptConfigWithKeypath.ScriptConfig,
+		scriptConfigWithKeypath.Keypath,
+	)
+}
+
+// BTCRegisterScriptConfig implements keystore.Keystore.
+func (keystore *keystore) BTCRegisterScriptConfig(
+	coin coinpkg.Coin,
+	configuration *signing.Configuration,
+	name string,
+) error {
+	if configuration.BitcoinDescriptor == nil {
+		return nil
+	}
+	msgCoin, ok := btcMsgCoinMap[coin.Code()]
+	if !ok {
+		return errp.New("unsupported coin")
+	}
+	scriptConfigWithKeypath, err := keystore.btcMultisigScriptConfig(configuration)
+	if err != nil {
+		return err
+	}
+	return keystore.device.BTCRegisterScriptConfig(
+		msgCoin,
+		scriptConfigWithKeypath.ScriptConfig,
+		scriptConfigWithKeypath.Keypath,
+		name,
+	)
 }
 
 // ExtendedPublicKey implements keystore.Keystore.

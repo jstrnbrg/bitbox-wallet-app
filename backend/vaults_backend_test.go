@@ -13,6 +13,7 @@ import (
 	blockchainpkg "github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/blockchain"
 	blockchainMock "github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/btc/blockchain/mocks"
 	coinpkg "github.com/BitBoxSwiss/bitbox-wallet-app/backend/coins/coin"
+	keystoremock "github.com/BitBoxSwiss/bitbox-wallet-app/backend/keystore/mocks"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/keystore/software"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/signing"
 	"github.com/BitBoxSwiss/bitbox-wallet-app/backend/vaults"
@@ -175,7 +176,8 @@ func TestVaultSetupLifecycle(t *testing.T) {
 	draft, err = backend.EnrollVaultSigner(draft.ID)
 	require.NoError(t, err)
 	require.Len(t, draft.Participants, 3)
-	require.Equal(t, vaults.DraftStateReadyForBackup, draft.State)
+	require.Equal(t, vaults.DraftStateReadyForDeviceConfirmation, draft.State)
+	require.Empty(t, draft.RegisteredSigners)
 	require.Equal(t, defaultVaultName(coin, 0), draft.Name)
 	require.Equal(t, vaults.CanonicalizeParticipants(draft.Participants), draft.Participants)
 
@@ -188,6 +190,26 @@ func TestVaultSetupLifecycle(t *testing.T) {
 		draft.Participants,
 	)
 	require.Equal(t, expectedPolicyID, draft.PolicyID)
+
+	_, err = backend.VaultSetupRecoveryFile(draft.ID)
+	require.ErrorContains(t, err, "not ready for backup")
+
+	_, err = backend.CompleteVaultSetup(draft.ID, "", true)
+	require.ErrorContains(t, err, "vault policy must be confirmed on all devices")
+
+	for i, signer := range signers {
+		setTestKeystore(signer)
+		rootFingerprint, err := signer.RootFingerprint()
+		require.NoError(t, err)
+		draft, err = backend.ConfirmVaultSigner(draft.ID, rootFingerprint)
+		require.NoError(t, err)
+		require.Len(t, draft.RegisteredSigners, i+1)
+		expectedState := vaults.DraftStateReadyForDeviceConfirmation
+		if i == len(signers)-1 {
+			expectedState = vaults.DraftStateReadyForBackup
+		}
+		require.Equal(t, expectedState, draft.State)
+	}
 
 	recovery, err := backend.VaultSetupRecoveryFile(draft.ID)
 	require.NoError(t, err)
@@ -254,6 +276,137 @@ func TestVaultSetupLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint16(1), nextDraft.AccountNumber)
 	require.NoError(t, backend.DiscardVaultSetup(nextDraft.ID))
+}
+
+func TestVaultSetupConfirmSignerIsIdempotent(t *testing.T) {
+	backend := newBackend(t, testnetEnabled, regtestDisabled)
+	defer backend.Close()
+
+	signers := []*software.Keystore{
+		newVaultTestKeystore(t, "vault-confirm-signer-1"),
+		newVaultTestKeystore(t, "vault-confirm-signer-2"),
+		newVaultTestKeystore(t, "vault-confirm-signer-3"),
+	}
+
+	setTestKeystore := func(ks *software.Keystore) {
+		fp, err := ks.RootFingerprint()
+		require.NoError(t, err)
+		for k := range backend.keystores {
+			delete(backend.keystores, k)
+		}
+		backend.keystores[hex.EncodeToString(fp)] = ks
+	}
+
+	draft, err := backend.StartVaultSetup(coinpkg.CodeTBTC, "")
+	require.NoError(t, err)
+
+	for _, signer := range signers {
+		setTestKeystore(signer)
+		draft, err = backend.EnrollVaultSigner(draft.ID)
+		require.NoError(t, err)
+	}
+	require.Equal(t, vaults.DraftStateReadyForDeviceConfirmation, draft.State)
+
+	rootFingerprint, err := signers[0].RootFingerprint()
+	require.NoError(t, err)
+
+	setTestKeystore(signers[0])
+	draft, err = backend.ConfirmVaultSigner(draft.ID, rootFingerprint)
+	require.NoError(t, err)
+	require.Equal(t, []string{hex.EncodeToString(rootFingerprint)}, draft.RegisteredSigners)
+
+	draft, err = backend.ConfirmVaultSigner(draft.ID, rootFingerprint)
+	require.NoError(t, err)
+	require.Equal(t, []string{hex.EncodeToString(rootFingerprint)}, draft.RegisteredSigners)
+
+	unknownSigner := newVaultTestKeystore(t, "vault-confirm-unknown")
+	unknownRootFingerprint, err := unknownSigner.RootFingerprint()
+	require.NoError(t, err)
+	_, err = backend.ConfirmVaultSigner(draft.ID, unknownRootFingerprint)
+	require.ErrorContains(t, err, "signer is not part of this vault draft")
+}
+
+func TestVaultSetupConfirmSignerUsesUniqueRegistrationName(t *testing.T) {
+	backend := newBackend(t, testnetEnabled, regtestDisabled)
+	defer backend.Close()
+
+	coin, err := backend.Coin(coinpkg.CodeTBTC)
+	require.NoError(t, err)
+
+	helpers := []*software.Keystore{
+		newVaultTestKeystore(t, "vault-duplicate-name-1"),
+		newVaultTestKeystore(t, "vault-duplicate-name-2"),
+		newVaultTestKeystore(t, "vault-duplicate-name-3"),
+	}
+
+	makeMock := func(helper *software.Keystore) *keystoremock.KeystoreMock {
+		rootFingerprint, err := helper.RootFingerprint()
+		require.NoError(t, err)
+		return &keystoremock.KeystoreMock{
+			NameFunc: func() (string, error) {
+				return "Test signer", nil
+			},
+			RootFingerprintFunc: func() ([]byte, error) {
+				return rootFingerprint, nil
+			},
+			SupportsCoinFunc: func(coinpkg.Coin) bool {
+				return true
+			},
+			SupportsAccountFunc: func(coinpkg.Coin, interface{}) bool {
+				return true
+			},
+			ExtendedPublicKeyFunc: helper.ExtendedPublicKey,
+			BTCXPubsFunc:          helper.BTCXPubs,
+			BTCIsScriptConfigRegisteredFunc: func(coinpkg.Coin, *signing.Configuration) (bool, error) {
+				return true, nil
+			},
+			BTCRegisterScriptConfigFunc: func(coinpkg.Coin, *signing.Configuration, string) error {
+				return nil
+			},
+		}
+	}
+
+	signers := []*keystoremock.KeystoreMock{
+		makeMock(helpers[0]),
+		makeMock(helpers[1]),
+		makeMock(helpers[2]),
+	}
+
+	setTestKeystore := func(ks *keystoremock.KeystoreMock) {
+		fp, err := ks.RootFingerprint()
+		require.NoError(t, err)
+		for k := range backend.keystores {
+			delete(backend.keystores, k)
+		}
+		backend.keystores[hex.EncodeToString(fp)] = ks
+	}
+
+	draft, err := backend.StartVaultSetup(coinpkg.CodeTBTC, "")
+	require.NoError(t, err)
+	for _, signer := range signers {
+		setTestKeystore(signer)
+		draft, err = backend.EnrollVaultSigner(draft.ID)
+		require.NoError(t, err)
+	}
+	require.Equal(t, vaults.DraftStateReadyForDeviceConfirmation, draft.State)
+
+	isRegisteredCalls := 0
+	signers[0].BTCIsScriptConfigRegisteredFunc = func(coinpkg.Coin, *signing.Configuration) (bool, error) {
+		isRegisteredCalls++
+		return isRegisteredCalls >= 2, nil
+	}
+	signers[0].BTCRegisterScriptConfigFunc = func(_ coinpkg.Coin, _ *signing.Configuration, name string) error {
+		require.Equal(t, fmt.Sprintf("%s #%s", defaultVaultName(coin, 0), draft.PolicyID[len(draft.PolicyID)-4:]), name)
+		return nil
+	}
+
+	setTestKeystore(signers[0])
+	rootFingerprint, err := signers[0].RootFingerprint()
+	require.NoError(t, err)
+	draft, err = backend.ConfirmVaultSigner(draft.ID, rootFingerprint)
+	require.NoError(t, err)
+	require.Equal(t, []string{hex.EncodeToString(rootFingerprint)}, draft.RegisteredSigners)
+	require.Len(t, signers[0].BTCRegisterScriptConfigCalls(), 1)
 }
 
 func TestImportVaultRecoveryValidationAndDuplicateProtection(t *testing.T) {

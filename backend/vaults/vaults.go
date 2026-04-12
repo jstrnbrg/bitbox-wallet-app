@@ -31,12 +31,13 @@ const (
 type DraftState string
 
 const (
-	DraftStateCollectingSigners      DraftState = "collectingSigners"
-	DraftStateReadyForBackup         DraftState = "readyForBackup"
-	DraftStateAwaitingOnChainBackup  DraftState = "awaitingOnChainBackup"
-	DraftStateReadyToComplete        DraftState = "readyToComplete"
-	DraftStateCompleted              DraftState = "completed"
-	DraftStateDiscarded              DraftState = "discarded"
+	DraftStateCollectingSigners          DraftState = "collectingSigners"
+	DraftStateReadyForDeviceConfirmation DraftState = "readyForDeviceConfirmation"
+	DraftStateReadyForBackup             DraftState = "readyForBackup"
+	DraftStateAwaitingOnChainBackup      DraftState = "awaitingOnChainBackup"
+	DraftStateReadyToComplete            DraftState = "readyToComplete"
+	DraftStateCompleted                  DraftState = "completed"
+	DraftStateDiscarded                  DraftState = "discarded"
 )
 
 // Draft models a persisted vault setup draft.
@@ -51,6 +52,7 @@ type Draft struct {
 	CreatedAt            time.Time                          `json:"createdAt"`
 	UpdatedAt            time.Time                          `json:"updatedAt"`
 	RecoveryAcknowledged bool                               `json:"recoveryAcknowledged"`
+	RegisteredSigners    []string                           `json:"registeredSigners"`
 	PolicyID             string                             `json:"policyId,omitempty"`
 }
 
@@ -258,15 +260,16 @@ func randomID() string {
 func (store *Store) CreateDraft(network coinpkg.Code, accountNumber uint16, name string) (*Draft, error) {
 	now := time.Now()
 	draft := &Draft{
-		ID:             randomID(),
-		Network:        network,
-		Name:           name,
-		AccountNumber:  accountNumber,
-		AccountKeypath: BIP48AccountKeypath(network, accountNumber),
-		Participants:   []signing.BitcoinPolicyParticipant{},
-		State:          DraftStateCollectingSigners,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		ID:                randomID(),
+		Network:           network,
+		Name:              name,
+		AccountNumber:     accountNumber,
+		AccountKeypath:    BIP48AccountKeypath(network, accountNumber),
+		Participants:      []signing.BitcoinPolicyParticipant{},
+		RegisteredSigners: []string{},
+		State:             DraftStateCollectingSigners,
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 	return draft, store.SaveDraft(draft)
 }
@@ -303,6 +306,9 @@ func (store *Store) GetDraft(id string) (*Draft, error) {
 	if draft.Participants == nil {
 		draft.Participants = []signing.BitcoinPolicyParticipant{}
 	}
+	if draft.RegisteredSigners == nil {
+		draft.RegisteredSigners = []string{}
+	}
 	return &draft, nil
 }
 
@@ -321,6 +327,9 @@ func (store *Store) ListDrafts() ([]*Draft, error) {
 			}
 			if draft.Participants == nil {
 				draft.Participants = []signing.BitcoinPolicyParticipant{}
+			}
+			if draft.RegisteredSigners == nil {
+				draft.RegisteredSigners = []string{}
 			}
 			if draft.State != DraftStateDiscarded && draft.State != DraftStateCompleted {
 				result = append(result, &draft)
