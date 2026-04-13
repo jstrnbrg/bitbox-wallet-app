@@ -134,5 +134,37 @@ describe('hooks for api calls', () => {
       // and returns it. The returned value should be `subscriptionValue`
       await waitFor(() => expect(result.current).toBe(subscriptionValue));
     });
+
+    it('does not let an older api result overwrite newer subscription data', async () => {
+      const apiValue = 'apiValue';
+      const subscriptionValue = 'subscriptionValue';
+      let subscriptionCallback: TSubscriptionCallback<any> | undefined;
+      let resolveApiCall: ((value: string) => void) | undefined;
+
+      const mockApiCall = vi.fn().mockImplementation(() => new Promise<string>((resolve) => {
+        resolveApiCall = resolve;
+      }));
+
+      const mockSubscription = vi.fn((callback: TSubscriptionCallback<any>) => {
+        subscriptionCallback = callback;
+        return () => {};
+      });
+
+      const { result } = renderHook(() => useSync(mockApiCall, mockSubscription));
+
+      await waitFor(() => expect(mockSubscription).toHaveBeenCalled());
+
+      act(() => {
+        subscriptionCallback && subscriptionCallback(subscriptionValue);
+      });
+
+      await waitFor(() => expect(result.current).toBe(subscriptionValue));
+
+      act(() => {
+        resolveApiCall && resolveApiCall(apiValue);
+      });
+
+      await waitFor(() => expect(result.current).toBe(subscriptionValue));
+    });
   });
 });

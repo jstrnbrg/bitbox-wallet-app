@@ -92,8 +92,17 @@ export const useSync = <T>(
   };
   useEffect(
     () => {
-      apiCall().then(onData);
-      return subscription(onData);
+      let receivedSubscriptionData = false;
+      const unsubscribe = subscription((data) => {
+        receivedSubscriptionData = true;
+        onData(data);
+      });
+      apiCall().then((data) => {
+        if (!receivedSubscriptionData) {
+          onData(data);
+        }
+      });
+      return unsubscribe;
     }, // we pass no dependencies because it's only queried once
     []); // eslint-disable-line react-hooks/exhaustive-deps
   return response;
