@@ -1,0 +1,124 @@
+/* Form-field styling used inside the shared Dialog component. */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-eight);
+  margin-bottom: var(--space-three-quarter);
+}
+
+.fieldLabel {
+  font-size: var(--size-small);
+  font-weight: 400;
+  color: var(--color-secondary);
+}
+
+.input {
+  appearance: none;
+  border: 1px solid var(--background-quaternary);
+  background: var(--background-secondary);
+  color: var(--color-default);
+  height: var(--input-height);
+  padding: 0 var(--space-half);
+  border-radius: var(--radius-xl);
+  font: inherit;
+  font-size: var(--size-default);
+  font-family: var(--font-family);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-blue);
+}
+
+.staticValue {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-quarter);
+  padding: var(--space-three-quarter);
+  border-radius: var(--radius-xl);
+  background: var(--background);
+  font-size: var(--size-small);
+}
+
+.accountList {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-quaternary);
+  border-radius: var(--radius-xl);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.accountRow {
+  align-items: center;
+  border-bottom: 1px solid var(--separation-line-color);
+  cursor: pointer;
+  display: flex;
+  gap: var(--space-quarter);
+  min-height: var(--item-height);
+  padding: 0 var(--space-half);
+}
+
+.accountRow:last-child {
+  border-bottom: 0;
+}
+
+.accountRow:hover,
+.accountRowSelected {
+  background: var(--background-focus);
+}
+
+.accountRow input {
+  margin: 0;
+}
+
+.accountIcon {
+  flex-shrink: 0;
+  height: 22px;
+  width: 22px;
+}
+
+.accountName {
+  font-size: var(--size-small);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--color-secondary);
+  font-size: var(--size-smaller);
+}
+
+.addressRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-quarter);
+  align-items: center;
+  padding: var(--space-three-quarter);
+  border-radius: var(--radius-xl);
+  background: var(--background);
+}
+
+.addressValue {
+  font-family: var(--font-family-monospace);
+  font-size: var(--size-small);
+  word-break: break-all;
+}
+
+.badge {
+  font-size: var(--size-smaller);
+  font-weight: 400;
+  padding: 2px var(--space-quarter);
+  border-radius: var(--radius-lg);
+  background: var(--color-info-background);
+  color: var(--color-blue);
+}
+
+.error {
+  color: var(--color-error);
+  font-size: var(--size-small);
+  margin-bottom: var(--space-three-quarter);
+}

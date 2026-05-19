@@ -19,6 +19,23 @@ import { NewBadge } from '@/components/new-badge/new-badge';
 import { ConnectedKeystore } from '../keystore/connected-keystore';
 import style from './sidebar.module.css';
 
+const CloudIcon = ({ title }: { title?: string }) => (
+  <svg
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.75"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden={title ? undefined : true}
+    role={title ? 'img' : undefined}>
+    {title && <title>{title}</title>}
+    <path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A6 6 0 0 0 6.08 11 4 4 0 0 0 6.5 19h11Z" />
+  </svg>
+);
+
 type SidebarProps = {
   devices: TDevices;
   accounts: TAccount[];
@@ -180,6 +197,19 @@ const Sidebar = ({
             </div>
           </>
         ) : null }
+
+        <div key="cloud" className={style.sidebarItem}>
+          <NavLink
+            className={({ isActive }) => isActive ? style.sidebarActive : ''}
+            to="/cloud"
+            title={t('cloud.title')}
+            onClick={handleSidebarItemClick}>
+            <div className={style.single}>
+              <CloudIcon title={t('cloud.title')} />
+            </div>
+            <span className={style.sidebarLabel}>{t('cloud.title')}</span>
+          </NavLink>
+        </div>
 
         <div key="settings" className={style.sidebarItem}>
           <NavLink

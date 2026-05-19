@@ -42,6 +42,14 @@ import { ConnectScreenWalletConnect } from './account/walletconnect/connect';
 import { DashboardWalletConnect } from './account/walletconnect/dashboard';
 import { AllAccounts } from '@/routes/accounts/all-accounts';
 import { More } from '@/routes/settings/more';
+import { CloudDashboard } from './cloud';
+import { CloudLayout } from './cloud/layout';
+import { ContactsList } from './cloud/contacts/list';
+import { AddContact } from './cloud/contacts/add';
+import { ContactDetail } from './cloud/contacts/detail';
+import { NotificationsList } from './cloud/notifications/list';
+import { TresorList } from './cloud/tresor/list';
+import { TresorEditor } from './cloud/tresor/editor';
 
 type TAppRouterProps = {
   devices: TDevices;
@@ -301,6 +309,16 @@ export const AppRouter = ({ devices, devicesKey, accounts, activeAccounts }: TAp
           <Route path="btcdirect-otc" element={<BTCDirectOTC/>} />
           <Route path="pocket-otc" element={<PocketOTC/>} />
           <Route path="swap" element={SwapEl} />
+        </Route>
+        <Route path="cloud" element={<CloudLayout accounts={activeAccounts} />}>
+          <Route index element={<CloudDashboard />} />
+          <Route path="contacts" element={<ContactsList />} />
+          <Route path="contacts/add" element={<AddContact />} />
+          <Route path="contacts/:contactId" element={<ContactDetail />} />
+          <Route path="notifications" element={<NotificationsList />} />
+          <Route path="tresor" element={<TresorList />} />
+          <Route path="tresor/new" element={<TresorEditor />} />
+          <Route path="tresor/:docId" element={<TresorEditor />} />
         </Route>
         <Route path="manage-backups/:deviceID" element={ManageBackupsEl} />
         <Route path="accounts/select-receive" element={ReceiveAccountsSelectorEl} />

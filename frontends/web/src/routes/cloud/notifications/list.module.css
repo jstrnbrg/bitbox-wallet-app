@@ -1,0 +1,113 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-default);
+}
+
+.header {
+  align-items: center;
+  display: flex;
+  gap: var(--space-half);
+}
+
+.backButton {
+  align-items: center;
+  background-color: transparent;
+  border: none;
+  color: var(--color-default);
+  display: inline-flex;
+  font-size: var(--size-default);
+  height: auto;
+  min-width: 0;
+  padding: var(--space-quarter);
+  padding-left: 0;
+  text-decoration: none;
+}
+
+.backButton img {
+  height: var(--size-subheader);
+}
+
+.empty {
+  color: var(--color-secondary);
+  font-size: var(--size-small);
+  padding: var(--space-default);
+  text-align: center;
+}
+
+.list {
+  background: var(--background-secondary);
+  border-radius: var(--radius-xl);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.row {
+  align-items: center;
+  border-bottom: 1px solid var(--separation-line-color);
+  color: inherit;
+  display: flex;
+  gap: var(--space-three-quarter);
+  min-height: var(--item-height-large);
+  padding: 0 var(--space-half);
+  text-decoration: none;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row:hover {
+  background: var(--background-focus);
+}
+
+.icon {
+  align-items: center;
+  border-radius: var(--radius-lg);
+  display: inline-flex;
+  flex-shrink: 0;
+  font-size: var(--size-smaller);
+  font-weight: 500;
+  height: 22px;
+  justify-content: center;
+  width: 22px;
+}
+
+.iconPayment {
+  background: var(--color-success-background);
+  color: var(--color-darkgreen);
+}
+
+.iconMessage {
+  background: var(--color-info-background);
+  color: var(--color-blue);
+}
+
+.iconMessage::before {
+  background: currentColor;
+  border-radius: 50%;
+  content: "";
+  display: block;
+  height: 8px;
+  width: 8px;
+}
+
+.rowText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rowTitle {
+  font-size: var(--size-small);
+  font-weight: 400;
+}
+
+.rowHandle {
+  color: var(--color-secondary);
+  font-family: var(--font-family-monospace);
+  font-size: var(--size-smaller);
+}

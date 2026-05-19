@@ -1,0 +1,125 @@
+.card {
+  align-items: center;
+  background: var(--background-secondary);
+  border-radius: var(--radius-xl);
+  display: flex;
+  min-height: var(--item-height-large);
+  padding: 0 var(--space-half);
+}
+
+.handleRow {
+  align-items: center;
+  display: flex;
+  gap: var(--space-quarter);
+  min-width: 0;
+  width: 100%;
+}
+
+.handle {
+  flex: 1;
+  font-size: var(--size-default);
+  font-weight: 400;
+  line-height: 1.2;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copyButton {
+  align-items: center;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  flex-shrink: 0;
+  height: 28px;
+  justify-content: center;
+  min-width: 0;
+  padding: 0;
+  width: 28px;
+}
+
+.copyButton:hover {
+  background: var(--background-focus);
+}
+
+.copyButton img {
+  height: var(--size-default);
+}
+
+.copyButtonSuccess {
+  background: var(--color-success-background);
+}
+
+.copied {
+  display: inline-block;
+  background: var(--color-success-background);
+  color: var(--color-darkgreen);
+  padding: var(--space-eight) 10px;
+  border-radius: var(--radius-lg);
+  font-size: var(--size-smaller);
+  font-weight: 400;
+}
+
+.qrButton {
+  align-items: center;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  flex-shrink: 0;
+  height: 40px;
+  justify-content: center;
+  min-width: 0;
+  padding: 0;
+  width: 40px;
+}
+
+.qrButton:hover {
+  background: var(--background-focus);
+}
+
+.qrButton img {
+  height: 22px;
+  width: 22px;
+}
+
+.qrDialog {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  text-align: center;
+}
+
+.qr {
+  align-items: center;
+  background: white;
+  border: 1px solid var(--background-quaternary);
+  border-radius: var(--radius-xl);
+  display: flex;
+  justify-content: center;
+  padding: var(--space-half);
+}
+
+.dialogHandle {
+  font-family: var(--font-family-monospace);
+  font-size: var(--size-small);
+  color: var(--color-default);
+}
+
+.privacyHint {
+  font-size: var(--size-smaller);
+  color: var(--color-secondary);
+  line-height: 1.4;
+}
+
+@media (max-width: 720px) {
+  .handleRow {
+    width: 100%;
+  }
+}

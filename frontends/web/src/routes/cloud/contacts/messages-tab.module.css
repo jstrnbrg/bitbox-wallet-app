@@ -1,0 +1,116 @@
+.tab {
+  background: var(--background-secondary);
+  border-radius: var(--radius-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  height: 100%;
+  padding: var(--space-half);
+}
+
+.encInfo {
+  font-size: var(--size-smaller);
+  color: var(--color-secondary);
+  padding: 0;
+}
+
+.thread {
+  flex: 1;
+  min-height: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-three-quarter);
+  padding: 0;
+  background: transparent;
+}
+
+.threadEmpty {
+  flex: none;
+  min-height: 0;
+}
+
+.empty {
+  text-align: center;
+  padding: var(--space-quarter) 0;
+  color: var(--color-secondary);
+  font-size: var(--size-small);
+}
+
+.bubbleRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 80%;
+}
+
+.bubbleRowMe {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.bubbleRowThem {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.bubble {
+  padding: var(--space-quarter) var(--space-half);
+  border-radius: var(--radius-xl);
+  font-size: var(--size-small);
+  line-height: 1.4;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.bubbleMe {
+  background: var(--color-blue);
+  color: var(--color-alt);
+}
+
+.bubbleThem {
+  background: var(--background-secondary);
+  color: inherit;
+}
+
+.bubbleBody {
+  margin: 0;
+}
+
+.bubbleMeta {
+  font-size: var(--size-xsmall);
+  color: var(--color-tertiary);
+}
+
+.composer {
+  display: flex;
+  gap: var(--space-quarter);
+  align-items: stretch;
+}
+
+.composerInput {
+  flex: 1;
+  appearance: none;
+  border: 1px solid var(--background-quaternary);
+  background: var(--background-secondary);
+  color: var(--color-default);
+  height: var(--button-height);
+  min-height: var(--button-height);
+  padding: var(--space-quarter) var(--space-half);
+  border-radius: var(--radius-xl);
+  font: inherit;
+  font-size: var(--size-default);
+  font-family: var(--font-family);
+  line-height: 1.5;
+  resize: none;
+}
+
+.composerInput:focus {
+  outline: none;
+  border-color: var(--color-blue);
+}
+
+.sendButton {
+  flex-shrink: 0;
+}

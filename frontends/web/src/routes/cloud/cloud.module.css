@@ -1,0 +1,60 @@
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-default);
+}
+
+.topRow {
+  align-items: center;
+  display: flex;
+  gap: var(--space-half);
+  justify-content: space-between;
+}
+
+.notificationButton {
+  align-items: center;
+  background: var(--background-secondary);
+  border-radius: 50%;
+  color: var(--color-default);
+  display: inline-flex;
+  flex-shrink: 0;
+  height: var(--item-height);
+  justify-content: center;
+  position: relative;
+  text-decoration: none;
+  width: var(--item-height);
+}
+
+.notificationButton:hover {
+  background: var(--background-focus);
+}
+
+.notificationBadge {
+  align-items: center;
+  background: var(--color-blue);
+  border: 2px solid var(--background-secondary);
+  border-radius: 50%;
+  color: var(--color-alt);
+  display: inline-flex;
+  font-size: var(--size-xsmall);
+  font-weight: 500;
+  height: 20px;
+  justify-content: center;
+  min-width: 20px;
+  padding: 0 5px;
+  position: absolute;
+  right: -4px;
+  top: -4px;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-half);
+}
+
+@media (max-width: 720px) {
+  .tiles {
+    grid-template-columns: 1fr;
+  }
+}

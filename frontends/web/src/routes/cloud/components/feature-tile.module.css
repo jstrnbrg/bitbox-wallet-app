@@ -1,0 +1,50 @@
+.tile {
+  align-items: center;
+  background: var(--background-secondary);
+  border-radius: var(--radius-xl);
+  color: inherit;
+  display: grid;
+  gap: var(--space-quarter);
+  grid-template-columns: 40px 1fr;
+  min-height: var(--item-height-large);
+  padding: var(--space-half);
+  position: relative;
+  text-decoration: none;
+  transition: background-color .2s ease-out;
+}
+
+a.tile {
+  cursor: pointer;
+}
+
+a.tile:hover {
+  background: var(--background-focus);
+}
+
+.tileInactive {
+  cursor: default;
+}
+
+.icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--background-focus);
+  color: var(--color-blue);
+  grid-row: 1 / span 2;
+}
+
+.title {
+  font-size: var(--size-default);
+  font-weight: 400;
+  margin: 0;
+}
+
+.subtitle {
+  font-size: var(--size-small);
+  color: var(--color-secondary);
+  line-height: 1.35;
+}
