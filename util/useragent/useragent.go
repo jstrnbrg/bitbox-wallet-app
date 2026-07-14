@@ -7,12 +7,12 @@ import (
 )
 
 // String returns the BitBoxApp user agent.
-func String(version, host string) string {
-	return "BitBoxApp/" + version + " (" + host + ")"
+func String(version, platform string) string {
+	return "BitBoxApp/" + version + " (" + platform + ")"
 }
 
-// HostFromRuntime returns the user agent host token for the current Go runtime.
-func HostFromRuntime() string {
+// PlatformFromRuntime returns the user agent platform token for the current Go runtime.
+func PlatformFromRuntime() string {
 	switch runtime.GOOS {
 	case "darwin":
 		return "mac"

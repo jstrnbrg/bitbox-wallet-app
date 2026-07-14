@@ -98,9 +98,9 @@ func (webdevEnvironment) OnAuthSettingChanged(enabled bool) {
 func (webdevEnvironment) BluetoothConnect(identifier string) {
 }
 
-// UserAgentHost implements backend.Environment.
-func (webdevEnvironment) UserAgentHost() string {
-	return useragent.HostFromRuntime()
+// UserAgentPlatform implements backend.Environment.
+func (webdevEnvironment) UserAgentPlatform() string {
+	return useragent.PlatformFromRuntime()
 }
 
 // NativeLocale naively implements backend.Environment.

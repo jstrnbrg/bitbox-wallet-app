@@ -13,13 +13,13 @@ func TestString(t *testing.T) {
 	require.Equal(t, "BitBoxApp/1.2.3 (linux)", String("1.2.3", "linux"))
 }
 
-func TestHostFromRuntime(t *testing.T) {
+func TestPlatformFromRuntime(t *testing.T) {
 	switch runtime.GOOS {
 	case "darwin":
-		require.Equal(t, "mac", HostFromRuntime())
+		require.Equal(t, "mac", PlatformFromRuntime())
 	case "windows":
-		require.Equal(t, "win", HostFromRuntime())
+		require.Equal(t, "win", PlatformFromRuntime())
 	default:
-		require.Equal(t, runtime.GOOS, HostFromRuntime())
+		require.Equal(t, runtime.GOOS, PlatformFromRuntime())
 	}
 }

@@ -85,8 +85,15 @@ class GoEnvironment: NSObject, MobileserverGoEnvironmentInterfaceProtocol, UIDoc
         return Locale.current.identifier
     }
 
-    func userAgentHost() -> String {
-        return UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
+    func userAgentPlatform() -> String {
+        switch UIDevice.current.userInterfaceIdiom {
+        case .phone:
+            return "iphone"
+        case .pad:
+            return "ipad"
+        default:
+            return "ios"
+        }
     }
 
     func notifyUser(_ p0: String?) {

@@ -188,7 +188,7 @@ type BackendEnvironment struct {
 	AuthFunc                 func()
 	OnAuthSettingChangedFunc func(bool)
 	BluetoothConnectFunc     func(string)
-	UserAgentHostFunc        func() string
+	UserAgentPlatformFunc    func() string
 }
 
 // NotifyUser implements backend.Environment.
@@ -282,10 +282,10 @@ func (env *BackendEnvironment) BluetoothConnect(identifier string) {
 	}
 }
 
-// UserAgentHost implements backend.Environment.
-func (env *BackendEnvironment) UserAgentHost() string {
-	if env.UserAgentHostFunc != nil {
-		return env.UserAgentHostFunc()
+// UserAgentPlatform implements backend.Environment.
+func (env *BackendEnvironment) UserAgentPlatform() string {
+	if env.UserAgentPlatformFunc != nil {
+		return env.UserAgentPlatformFunc()
 	}
 	return ""
 }

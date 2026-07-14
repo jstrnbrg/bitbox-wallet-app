@@ -50,7 +50,7 @@ func (e *backendEnv) DetectDarkTheme() bool               { return false }
 func (e *backendEnv) Auth()                               {}
 func (e *backendEnv) OnAuthSettingChanged(bool)           {}
 func (e *backendEnv) BluetoothConnect(string)             {}
-func (e *backendEnv) UserAgentHost() string               { return "linux" }
+func (e *backendEnv) UserAgentPlatform() string           { return "linux" }
 
 func TestGetNativeLocale(t *testing.T) {
 	const ptLocale = "pt"

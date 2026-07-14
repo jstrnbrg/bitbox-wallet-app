@@ -73,13 +73,13 @@ func (backend *Backend) newUpdateRequest() (*http.Request, error) {
 }
 
 func (backend *Backend) userAgent() string {
-	host := useragent.HostFromRuntime()
+	platform := useragent.PlatformFromRuntime()
 	if backend.environment != nil {
-		if environmentHost := backend.environment.UserAgentHost(); environmentHost != "" {
-			host = environmentHost
+		if environmentPlatform := backend.environment.UserAgentPlatform(); environmentPlatform != "" {
+			platform = environmentPlatform
 		}
 	}
-	return useragent.String(versioninfo.Version.String(), host)
+	return useragent.String(versioninfo.Version.String(), platform)
 }
 
 // CheckForUpdateIgnoringErrors suppresses any errors that are triggered, for example, when offline.

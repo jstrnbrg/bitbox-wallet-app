@@ -187,7 +187,8 @@ public class GoViewModel extends AndroidViewModel {
             return locale.toString();
         }
 
-        public String userAgentHost() {
+        @Override
+        public String userAgentPlatform() {
             return "android";
         }
 

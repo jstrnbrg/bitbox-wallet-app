@@ -207,9 +207,9 @@ func serve(
 				filename := C.GoString(cFilename)
 				return filename
 			},
-			SetDarkThemeFunc:    func(bool) {},
-			DetectDarkThemeFunc: detectDarkTheme,
-			UserAgentHostFunc:   useragent.HostFromRuntime,
+			SetDarkThemeFunc:      func(bool) {},
+			DetectDarkThemeFunc:   detectDarkTheme,
+			UserAgentPlatformFunc: useragent.PlatformFromRuntime,
 			AuthFunc: func() {
 				log.Info("Qt auth")
 				authResult(mobileserver.AuthResultOk)

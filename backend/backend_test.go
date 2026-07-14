@@ -343,7 +343,7 @@ func (e environment) OnAuthSettingChanged(bool) {}
 
 func (e environment) BluetoothConnect(string) {}
 
-func (e environment) UserAgentHost() string {
+func (e environment) UserAgentPlatform() string {
 	return "linux"
 }
 
