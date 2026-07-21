@@ -127,7 +127,7 @@ func TestUpdateCheckerCheckAndSet(t *testing.T) {
 func TestNewUpdateRequestSetsUserAgent(t *testing.T) {
 	backend := &Backend{environment: environment{}}
 
-	request, err := backend.newUpdateRequest(context.Background())
+	request, err := newUpdateRequest(context.Background(), backend.userAgent())
 
 	require.NoError(t, err)
 	require.Equal(t, updateFileURL, request.URL.String())

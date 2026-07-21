@@ -343,7 +343,7 @@ func NewBackend(arguments *arguments.Arguments, environment Environment) (*Backe
 	}
 	backend.notifier = notifier
 	backend.socksProxy = backendProxy
-	backend.updateChecker = newUpdateChecker(&backend.socksProxy, backend.userAgent)
+	backend.updateChecker = newUpdateChecker(&backend.socksProxy, backend.userAgent())
 	backend.updateChecker.Observe(backend.Notify)
 	backend.httpClient = hclient
 	backend.ethupdater = eth.NewUpdater(accountUpdate, backend.httpClient, backend.etherScanRateLimiter, backend.updateETHAccounts)

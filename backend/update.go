@@ -55,7 +55,7 @@ type UpdateState struct {
 	Update   *UpdateFile `json:"update"`
 }
 
-func newUpdateChecker(proxy *socksproxy.SocksProxy, userAgent func() string) *updateChecker {
+func newUpdateChecker(proxy *socksproxy.SocksProxy, userAgent string) *updateChecker {
 	return &updateChecker{
 		check: func(ctx context.Context) (*UpdateFile, error) {
 			return checkForUpdate(ctx, proxy, userAgent)
@@ -65,13 +65,13 @@ func newUpdateChecker(proxy *socksproxy.SocksProxy, userAgent func() string) *up
 
 // checkForUpdate checks whether a newer version of this application has been released.
 // It returns the retrieved update file if a newer version has been released and nil otherwise.
-func checkForUpdate(ctx context.Context, proxy *socksproxy.SocksProxy, userAgent func() string) (*UpdateFile, error) {
+func checkForUpdate(ctx context.Context, proxy *socksproxy.SocksProxy, userAgent string) (*UpdateFile, error) {
 	client, err := proxy.GetHTTPClient()
 	if err != nil {
 		return nil, errp.WithStack(err)
 	}
 
-	request, err := newUpdateRequest(ctx, userAgent())
+	request, err := newUpdateRequest(ctx, userAgent)
 	if err != nil {
 		return nil, errp.WithStack(err)
 	}
@@ -106,10 +106,6 @@ func newUpdateRequest(ctx context.Context, userAgent string) (*http.Request, err
 	}
 	request.Header.Set("User-Agent", userAgent)
 	return request, nil
-}
-
-func (backend *Backend) newUpdateRequest(ctx context.Context) (*http.Request, error) {
-	return newUpdateRequest(ctx, backend.userAgent())
 }
 
 func (backend *Backend) userAgent() string {
